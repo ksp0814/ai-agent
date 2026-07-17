@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-agent"
+version = "0.1.0"
+description = "A local-first personal assistant and coding agent"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+agent = "personal_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
