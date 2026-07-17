@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 import json
-import os
-from typing import Protocol
+import shutil
+import subprocess
+from typing import Optional, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -17,6 +18,69 @@ class ModelProvider(Protocol):
 class OfflineProvider:
     def respond(self, prompt: str, context: list[str]) -> str:
         return "오프라인 모드입니다. /help에서 사용할 수 있는 명령을 확인하세요."
+
+    def describe(self) -> str:
+        return "현재 오프라인 모드입니다."
+
+
+class CodexCliProvider:
+    """Use the user's existing Codex CLI login instead of an API key."""
+
+    def __init__(self, workspace, model: Optional[str] = None, reasoning_effort: Optional[str] = None, executable: str = "codex", timeout: int = 120):
+        self.workspace = workspace
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.executable = executable
+        self.timeout = timeout
+
+    def respond(self, prompt: str, context: list[str]) -> str:
+        memory = "\n".join(f"- {item}" for item in context) or "(없음)"
+        full_prompt = (
+            "당신은 개인비서 겸 코딩 에이전트입니다. 답변은 한국어로 간결하고 실행 가능하게 작성하세요.\n"
+            f"사용자 장기 기억:\n{memory}\n\n"
+            f"사용자 요청:\n{prompt}"
+        )
+        command = [
+            self.executable,
+            "exec",
+            "--ephemeral",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--cd",
+            str(self.workspace),
+        ]
+        if self.model:
+            command.extend(["--model", self.model])
+        if self.reasoning_effort:
+            command.extend(["--config", f'model_reasoning_effort="{self.reasoning_effort}"'])
+        command.append(full_prompt)
+        try:
+            result = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("Codex CLI를 찾을 수 없습니다. codex 설치 후 다시 실행하세요.") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Codex CLI 요청 시간이 초과되었습니다.") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()[-500:]
+            raise RuntimeError(f"Codex CLI 오류({result.returncode}): {detail}")
+        response = result.stdout.strip()
+        if not response:
+            raise RuntimeError("Codex CLI 응답이 비어 있습니다.")
+        return response
+
+    def describe(self) -> str:
+        return f"현재 모델: {self.model or 'Codex 기본 모델'}\nReasoning effort: {self.reasoning_effort or '기본값'}"
+
+    @staticmethod
+    def available(executable: str = "codex") -> bool:
+        return shutil.which(executable) is not None
 
 
 class OpenAIProvider:
@@ -56,6 +120,9 @@ class OpenAIProvider:
         except TimeoutError as exc:
             raise RuntimeError("OpenAI API 요청 시간이 초과되었습니다.") from exc
         return self._extract_text(body)
+
+    def describe(self) -> str:
+        return f"현재 모델: {self.model}"
 
     @staticmethod
     def _extract_text(body: dict) -> str:
@@ -103,6 +170,10 @@ class Agent:
             return "\n".join(f"- {item}" for item in memories) if memories else "저장된 기억이 없습니다."
         if request == "/test":
             return self.tools.run_tests()
+        if any(term in request.casefold() for term in ("무슨 모델", "어떤 모델", "현재 모델", "reasoning effort")):
+            describe = getattr(self.model, "describe", None)
+            if describe:
+                return describe()
         if request.startswith("/write "):
             parts = request[7:].split(" ", 1)
             if len(parts) != 2 or not parts[0] or not parts[1]:

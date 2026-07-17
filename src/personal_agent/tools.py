@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,6 +22,22 @@ class WorkspaceTools:
             if len(files) >= limit:
                 break
         return files
+
+    def scan_tree(self, file_limit: int = 100_000, directory_limit: int = 10_000) -> tuple[list[str], list[str]]:
+        """Scan files and directories in one traversal for the desktop tree."""
+        files, directories = [], []
+        for current, dir_names, file_names in os.walk(self.root):
+            dir_names[:] = sorted(name for name in dir_names if name not in {".git", ".agent"})
+            relative_dir = Path(current).relative_to(self.root)
+            if relative_dir != Path(".") and len(directories) < directory_limit:
+                directories.append(str(relative_dir))
+            for name in sorted(file_names, key=str.casefold):
+                if len(files) >= file_limit:
+                    break
+                files.append(str(relative_dir / name))
+            if len(files) >= file_limit and len(directories) >= directory_limit:
+                break
+        return files[:file_limit], directories[:directory_limit]
 
     def read_file(self, relative: str) -> str:
         path = self.resolve(relative)

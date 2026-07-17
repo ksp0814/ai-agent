@@ -3,7 +3,7 @@ from pathlib import Path
 
 import os
 
-from .agent import Agent, OfflineProvider, OpenAIProvider
+from .agent import Agent, CodexCliProvider, OfflineProvider, OpenAIProvider
 from .config import Settings
 from .memory import Memory
 from .policy import Policy
@@ -24,9 +24,12 @@ def main() -> None:
     if api_key and model_name:
         model = OpenAIProvider(api_key, model_name, os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
         mode = f"OpenAI API 모드 · model: {model_name}"
+    elif CodexCliProvider.available():
+        model = CodexCliProvider(settings.workspace)
+        mode = "Codex CLI 모드 · 기존 Codex 로그인 사용"
     else:
         model = OfflineProvider()
-        mode = "오프라인 모드 · OPENAI_API_KEY와 OPENAI_MODEL을 설정하면 API 모드로 전환"
+        mode = "오프라인 모드 · Codex CLI 로그인 또는 API 설정 필요"
     agent = Agent(WorkspaceTools(settings.workspace), Memory(settings.database), Policy(approve), model)
     print(f"Personal Agent · workspace: {settings.workspace}")
     print(mode)

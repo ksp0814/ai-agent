@@ -11,6 +11,17 @@ python -m pip install -e .
 agent
 ```
 
+## 데스크톱 앱
+
+macOS와 Windows용 데스크톱 UI는 PySide6로 실행합니다.
+
+```bash
+python -m pip install -e ".[desktop]"
+agent-desktop
+```
+
+데스크톱 앱 중앙 화면은 xterm.js 터미널에서 실제 Codex CLI 세션을 표시합니다. macOS는 PTY, Windows는 ConPTY 기반으로 동작하며 모델과 reasoning effort는 Codex 설정을 사용합니다. 작업 공간마다 별도 Codex CLI 세션과 터미널 화면을 유지합니다. 파일 변경 승인은 중앙 터미널에서 Codex CLI 방식으로 처리됩니다.
+
 LLM 없이도 기본 명령을 사용할 수 있습니다.
 
 ```text
@@ -33,6 +44,17 @@ PYTHONPATH="$PWD/src" python3 -m personal_agent.cli
 ```
 
 또는 `.env.example`을 `.env`로 복사해 사용할 수 있습니다. 실제 키가 들어간 `.env`는 `.gitignore`에 등록되어 있으므로 커밋되지 않습니다.
+
+## Codex 로그인 사용
+
+OpenAI API 키 대신 Codex CLI 로그인 세션을 사용할 수 있습니다.
+
+```bash
+codex login
+agent
+```
+
+API 환경변수가 없고 `codex` 명령이 설치되어 있으면 Personal Agent가 자동으로 `codex exec`를 호출합니다. 이 경로는 모델이 작업 공간을 직접 수정하지 않도록 read-only 모드로 실행됩니다. 파일 수정은 Personal Agent의 승인 흐름을 사용합니다.
 
 호환 endpoint를 사용하려면 다음 환경변수도 설정할 수 있습니다.
 
