@@ -45,9 +45,23 @@ class WorkspaceStateTests(unittest.TestCase):
 
             store.save([workspace], workspace, sessions, {str(workspace): "session-1"})
 
-            loaded_sessions, active_sessions = store.load_sessions()
+            loaded_sessions, active_sessions, history = store.load_sessions()
             self.assertEqual(loaded_sessions, sessions)
             self.assertEqual(active_sessions, {str(workspace): "session-1"})
+            self.assertEqual(history, {})
+
+    def test_saves_and_loads_limited_terminal_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            store = WorkspaceStateStore(root / "state.json")
+            history = {"session-1": "x" * 120_000}
+
+            store.save([workspace], workspace, terminal_history=history)
+
+            _, _, loaded_history = store.load_sessions()
+            self.assertEqual(loaded_history["session-1"], "x" * 100_000)
 
 
 if __name__ == "__main__":

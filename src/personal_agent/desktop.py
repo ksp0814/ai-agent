@@ -271,11 +271,15 @@ class MainWindow(QMainWindow):
         self.workspace_store = Path.home() / ".personal-agent" / "workspaces.json"
         self.workspace_state = WorkspaceStateStore(self.workspace_store)
         self.workspaces, self.workspace = self.workspace_state.load(self.workspace)
-        saved_sessions, saved_active_sessions = self.workspace_state.load_sessions()
+        saved_sessions, saved_active_sessions, saved_terminal_history = self.workspace_state.load_sessions()
         self.sessions_by_workspace = self._restore_sessions(saved_sessions)
         self.active_session_ids = {
             str(Path(path).expanduser().resolve()): session_id
             for path, session_id in saved_active_sessions.items()
+        }
+        self.terminal_history = {
+            session_id: value[-100_000:]
+            for session_id, value in saved_terminal_history.items()
         }
         self._ensure_session_for_workspace()
         self.tools = WorkspaceTools(self.workspace)
@@ -302,6 +306,7 @@ class MainWindow(QMainWindow):
         self.all_files = []
         self.all_directories = []
         self.preview_relative = None
+        self.approval_pending = False
         self.setWindowTitle("Personal Agent — Workbench")
         self.resize(1360, 820)
         self.setStyleSheet(self._style())
@@ -369,6 +374,14 @@ class MainWindow(QMainWindow):
         self.activity = QLabel("● Codex CLI 터미널")
         self.activity.setObjectName("activity")
         center_layout.addWidget(self.activity)
+        self.approval_label = QLabel("승인 대기 없음 · Codex CLI 화면에서 승인 요청을 확인합니다.")
+        self.approval_label.setObjectName("approvalNotice")
+        self.approval_label.setWordWrap(True)
+        center_layout.addWidget(self.approval_label)
+        self.approval_focus_button = QPushButton("승인 요청으로 이동")
+        self.approval_focus_button.setObjectName("compactButton")
+        self.approval_focus_button.clicked.connect(self._focus_terminal_for_approval)
+        center_layout.addWidget(self.approval_focus_button)
         self.terminal = QWebEngineView()
         self.terminal.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
         self.terminal.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -542,6 +555,9 @@ class MainWindow(QMainWindow):
                 self.terminal_sessions[session_id] = session
             self.terminal_active = session_id
             self.terminal_bridge.set_active(session_id)
+            history = self.terminal_history.get(session_id)
+            if history:
+                self.terminal_bridge.emit_output(session_id, history)
             self.restart_button.setEnabled(False)
             self.stop_button.setEnabled(True)
             if self.terminal_timer is None:
@@ -585,6 +601,10 @@ class MainWindow(QMainWindow):
         self.activity.setText("● 중지됨 · 재시작 가능")
         self.statusBar().showMessage("Codex CLI 세션을 중지했습니다.")
 
+    def _focus_terminal_for_approval(self) -> None:
+        self.terminal.setFocus()
+        self.statusBar().showMessage("중앙 Codex CLI 화면에서 승인 요청을 확인하세요.")
+
     def _poll_terminal(self) -> None:
         if not self.terminal_sessions:
             return
@@ -595,6 +615,14 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Codex CLI 출력 읽기 실패: {exc}")
                 continue
             if output:
+                self.terminal_history[session_id] = (self.terminal_history.get(session_id, "") + output)[-100_000:]
+                lowered = output.lower()
+                if any(marker in lowered for marker in ("approve", "allow", "y/n", "승인", "허용")):
+                    self.approval_pending = True
+                    self.approval_label.setText("⚠ 승인 대기 · 중앙 Codex CLI 화면에서 요청을 확인하세요.")
+                    self.approval_label.setProperty("pending", True)
+                    self.approval_label.style().unpolish(self.approval_label)
+                    self.approval_label.style().polish(self.approval_label)
                 self.terminal_bridge.emit_output(session_id, output)
             if not session.alive() and session_id == self.terminal_active:
                 self.stop_button.setEnabled(False)
@@ -640,7 +668,13 @@ class MainWindow(QMainWindow):
                 for workspace, records in self.sessions_by_workspace.items()
                 if records
             }
-            self.workspace_state.save(self.workspaces, self.workspace, sessions, self.active_session_ids)
+            self.workspace_state.save(
+                self.workspaces,
+                self.workspace,
+                sessions,
+                self.active_session_ids,
+                self.terminal_history,
+            )
         except OSError as exc:
             self.statusBar().showMessage(f"작업 공간 목록을 저장하지 못했습니다: {exc}")
 
@@ -1379,6 +1413,8 @@ class MainWindow(QMainWindow):
         QLabel#gitStatus { color:#9fb9b4; background:#101820; border:1px solid #2a3a43; border-radius:8px; padding:9px 10px; }
         QLabel#diagnosticCard { color:#b8cbc6; background:#101820; border:1px solid #2a3a43; border-radius:8px; padding:9px 10px; }
         QLabel#activity { color:#bdf4d9; background:#17362f; border:1px solid #2c795f; border-radius:8px; padding:9px 12px; font-weight:700; }
+        QLabel#approvalNotice { color:#a7bab6; background:#101820; border:1px solid #2a3a43; border-radius:8px; padding:8px 11px; }
+        QLabel#approvalNotice[pending="true"] { color:#ffe4a8; background:#3b301e; border-color:#8b6e36; }
         QLabel#sessionNotice { color:#f5d99b; background:#342c1d; border:1px solid #765f35; border-radius:8px; padding:8px 11px; }
         QLabel#infoCard { color:#c5d5d1; background:#101820; border:1px solid #2a3a43; border-radius:8px; padding:12px; line-height:1.4em; }
         QLabel#previewTitle { color:#b4c7c2; font-size:11px; padding:2px; }

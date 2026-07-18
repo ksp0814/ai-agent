@@ -43,16 +43,19 @@ class WorkspaceStateStore:
                 active = candidate
         return paths, active
 
-    def load_sessions(self) -> tuple[dict[str, list[dict[str, str]]], dict[str, str]]:
+    def load_sessions(self) -> tuple[dict[str, list[dict[str, str]]], dict[str, str], dict[str, str]]:
         payload = self._read_payload()
         if not isinstance(payload, dict):
-            return {}, {}
+            return {}, {}, {}
         sessions = payload.get("sessions", {})
         active_sessions = payload.get("active_sessions", {})
+        terminal_history = payload.get("terminal_history", {})
         if not isinstance(sessions, dict):
             sessions = {}
         if not isinstance(active_sessions, dict):
             active_sessions = {}
+        if not isinstance(terminal_history, dict):
+            terminal_history = {}
         cleaned_sessions: dict[str, list[dict[str, str]]] = {}
         for workspace, values in sessions.items():
             if not isinstance(workspace, str) or not isinstance(values, list):
@@ -72,7 +75,12 @@ class WorkspaceStateStore:
             for workspace, session_id in active_sessions.items()
             if isinstance(workspace, str) and isinstance(session_id, str)
         }
-        return cleaned_sessions, cleaned_active
+        cleaned_history = {
+            session_id: value[-100_000:]
+            for session_id, value in terminal_history.items()
+            if isinstance(session_id, str) and isinstance(value, str)
+        }
+        return cleaned_sessions, cleaned_active, cleaned_history
 
     def save(
         self,
@@ -80,6 +88,7 @@ class WorkspaceStateStore:
         active: Path,
         sessions: Optional[dict[str, list[dict[str, str]]]] = None,
         active_sessions: Optional[dict[str, str]] = None,
+        terminal_history: Optional[dict[str, str]] = None,
     ) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -90,6 +99,8 @@ class WorkspaceStateStore:
             payload["sessions"] = sessions
         if active_sessions is not None:
             payload["active_sessions"] = active_sessions
+        if terminal_history is not None:
+            payload["terminal_history"] = terminal_history
         temporary = self.path.with_name(f".{self.path.name}.tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self.path)
