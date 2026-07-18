@@ -1,6 +1,7 @@
 import os
 import platform
 import select
+import signal
 import struct
 import subprocess
 from pathlib import Path
@@ -28,14 +29,18 @@ class TerminalSession:
         self.master_fd = None
 
     def start(self) -> None:
+        if self.alive():
+            self.stop()
         if platform.system() == "Windows":
             from winpty import PtyProcess
             self.process = PtyProcess.spawn(self.command, cwd=str(self.workspace), dimensions=(45, 140))
             return
         self.master_fd, slave_fd = pty.openpty()
-        self.resize(140, 45)
-        self.process = subprocess.Popen(self.command, cwd=self.workspace, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, start_new_session=True)
-        os.close(slave_fd)
+        try:
+            self.resize(140, 45)
+            self.process = subprocess.Popen(self.command, cwd=self.workspace, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, start_new_session=True)
+        finally:
+            os.close(slave_fd)
 
     def resize(self, columns: int, rows: int) -> None:
         columns = max(40, int(columns))
@@ -62,7 +67,7 @@ class TerminalSession:
             return ""
         try:
             return os.read(self.master_fd, 8192).decode("utf-8", errors="replace")
-        except OSError:
+        except (OSError, ValueError):
             return ""
 
     def write(self, text: str) -> None:
@@ -77,12 +82,28 @@ class TerminalSession:
         return self.process is not None and self.process.poll() is None
 
     def stop(self) -> None:
-        if self.process is not None and self.alive():
-            self.process.terminate()
-        self.process = None
-        if self.master_fd is not None:
-            try:
-                os.close(self.master_fd)
-            except OSError:
-                pass
-            self.master_fd = None
+        process = self.process
+        try:
+            if process is not None and self.alive():
+                if platform.system() == "Windows":
+                    process.terminate()
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+        finally:
+            self.process = None
+            if self.master_fd is not None:
+                try:
+                    os.close(self.master_fd)
+                except OSError:
+                    pass
+                self.master_fd = None

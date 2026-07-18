@@ -1,0 +1,101 @@
+"""Persistent, non-sensitive desktop session state."""
+
+import json
+from pathlib import Path
+from typing import Optional
+
+
+class WorkspaceStateStore:
+    """Persist workspace paths and the last active workspace."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def load(self, initial: Path) -> tuple[list[Path], Path]:
+        initial = initial.expanduser().resolve()
+        paths = [initial]
+        active = initial
+        payload = self._read_payload()
+
+        if isinstance(payload, list):
+            values = payload
+            requested_active = None
+        elif isinstance(payload, dict):
+            values = payload.get("workspaces", [])
+            requested_active = payload.get("active_workspace")
+        else:
+            values = []
+            requested_active = None
+
+        if isinstance(values, list):
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                path = Path(value).expanduser().resolve()
+                if path.is_dir() and path not in paths:
+                    paths.append(path)
+
+        if isinstance(requested_active, str):
+            candidate = Path(requested_active).expanduser().resolve()
+            if candidate.is_dir():
+                if candidate not in paths:
+                    paths.append(candidate)
+                active = candidate
+        return paths, active
+
+    def load_sessions(self) -> tuple[dict[str, list[dict[str, str]]], dict[str, str]]:
+        payload = self._read_payload()
+        if not isinstance(payload, dict):
+            return {}, {}
+        sessions = payload.get("sessions", {})
+        active_sessions = payload.get("active_sessions", {})
+        if not isinstance(sessions, dict):
+            sessions = {}
+        if not isinstance(active_sessions, dict):
+            active_sessions = {}
+        cleaned_sessions: dict[str, list[dict[str, str]]] = {}
+        for workspace, values in sessions.items():
+            if not isinstance(workspace, str) or not isinstance(values, list):
+                continue
+            cleaned_values = []
+            for value in values:
+                if not isinstance(value, dict):
+                    continue
+                session_id = value.get("id")
+                name = value.get("name")
+                if isinstance(session_id, str) and isinstance(name, str) and session_id and name.strip():
+                    cleaned_values.append({"id": session_id, "name": name.strip()})
+            if cleaned_values:
+                cleaned_sessions[workspace] = cleaned_values
+        cleaned_active = {
+            workspace: session_id
+            for workspace, session_id in active_sessions.items()
+            if isinstance(workspace, str) and isinstance(session_id, str)
+        }
+        return cleaned_sessions, cleaned_active
+
+    def save(
+        self,
+        workspaces: list[Path],
+        active: Path,
+        sessions: Optional[dict[str, list[dict[str, str]]]] = None,
+        active_sessions: Optional[dict[str, str]] = None,
+    ) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "active_workspace": str(active),
+            "workspaces": [str(path) for path in workspaces],
+        }
+        if sessions is not None:
+            payload["sessions"] = sessions
+        if active_sessions is not None:
+            payload["active_sessions"] = active_sessions
+        temporary = self.path.with_name(f".{self.path.name}.tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(self.path)
+
+    def _read_payload(self):
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None

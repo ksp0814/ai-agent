@@ -150,7 +150,7 @@ class Agent:
         if not request:
             return "요청을 입력해 주세요."
         if request == "/help":
-            return "명령: /ls, /read <파일>, /write <파일> <내용>, /test, /remember <내용>, /memory, /quit"
+            return "명령: /ls, /read <파일>, /write <파일> <내용>, /test, /check, /git, /diff, /history, /resume, /remember <내용>, /memory, /quit"
         if request == "/ls":
             files = self.tools.list_files()
             return "\n".join(files) if files else "작업 공간에 파일이 없습니다."
@@ -170,6 +170,24 @@ class Agent:
             return "\n".join(f"- {item}" for item in memories) if memories else "저장된 기억이 없습니다."
         if request == "/test":
             return self.tools.run_tests()
+        if request == "/check":
+            response = self.tools.run_validation()
+            self.memory.record_interaction(request, response)
+            return response
+        if request == "/git":
+            return self.tools.git_status()
+        if request == "/diff":
+            return self.tools.git_diff()
+        if request == "/history":
+            interactions = self.memory.recent_interactions()
+            if not interactions:
+                return "저장된 작업 기록이 없습니다."
+            return "\n\n".join(f"요청: {old_request}\n응답: {response}" for old_request, response in interactions)
+        if request == "/resume":
+            interactions = self.memory.recent_interactions(5)
+            if not interactions:
+                return "재개할 작업 기록이 없습니다."
+            return "최근 작업:\n" + "\n".join(f"- {item[0]}" for item in interactions)
         if any(term in request.casefold() for term in ("무슨 모델", "어떤 모델", "현재 모델", "reasoning effort")):
             describe = getattr(self.model, "describe", None)
             if describe:
@@ -188,6 +206,10 @@ class Agent:
             self.tools.write_file(relative, content)
             return f"{relative} 파일을 수정했습니다."
         try:
-            return self.model.respond(request, self.memory.recent())
+            context = self.memory.recent()
+            context.extend(f"이전 요청: {old_request}\n이전 응답: {old_response}" for old_request, old_response in self.memory.recent_interactions(5))
+            response = self.model.respond(request, context)
+            self.memory.record_interaction(request, response)
+            return response
         except RuntimeError as exc:
             return f"모델 호출에 실패했습니다: {exc}"

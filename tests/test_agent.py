@@ -33,6 +33,13 @@ class AgentTests(unittest.TestCase):
             result = make_agent(Path(directory)).handle("/read ../secret.txt")
             self.assertIn("workspace 밖", result)
 
+    def test_interaction_history_and_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent = make_agent(Path(directory))
+            agent.handle("간단한 요청")
+            self.assertIn("간단한 요청", agent.handle("/history"))
+            self.assertIn("간단한 요청", agent.handle("/resume"))
+
 
 if __name__ == "__main__":
     unittest.main()

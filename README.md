@@ -30,6 +30,11 @@ LLM 없이도 기본 명령을 사용할 수 있습니다.
 /read README.md
 /remember 오늘부터 Python 프로젝트는 타입 힌트를 사용한다
 /memory
+/git
+/diff
+/check
+/history
+/resume
 /quit
 ```
 
@@ -68,7 +73,19 @@ export OPENAI_BASE_URL="https://your-compatible-endpoint/v1"
 - 안전한 범위의 테스트 실행
 - SQLite 기반 장기 메모리
 - 변경 작업 전 승인 요청
+- 데스크톱 앱의 파일 변경 Diff 확인 및 변경 승인·되돌리기
+- 여러 변경 파일 일괄 승인·되돌리기
+- 변경 파일 전용 목록과 신규·삭제·대용량·바이너리 상태 표시
+- 신규 파일 되돌리기 시 복구 보관함으로 안전하게 이동
+- 마지막 작업 공간 자동 복원 및 작업 공간별 Codex 세션 유지
+- 작업 공간별 Codex 세션 생성·전환·이름 변경·닫기
+- 여러 세션 사용 시 동일 파일 동시 수정 경고
+- Codex CLI 세션 중지·재시작과 macOS PTY·Windows ConPTY 지원
+- 다크 워크벤치 UI와 터미널 중심 레이아웃
 - 모델 계층 교체를 위한 `ModelProvider` 인터페이스
 - 기본 오프라인 응답 모드
+- 작업 기록 저장 및 최근 작업 재개
+- Git 상태·diff 확인
+- 고정된 프로젝트 테스트 검증 실행(`/check`)
 
 현재는 의도적으로 외부 API 키가 없어도 실행됩니다. 다음 단계에서 원하는 LLM provider와 캘린더·메일 같은 개인비서 도구를 연결하면 됩니다.

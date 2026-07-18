@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -51,5 +52,35 @@ class WorkspaceTools:
         path.write_text(content, encoding="utf-8")
 
     def run_tests(self) -> str:
-        result = subprocess.run(["python", "-m", "pytest", "-q"], cwd=self.root, text=True, capture_output=True, timeout=120)
+        result = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=self.root, text=True, capture_output=True, timeout=120)
         return (result.stdout + result.stderr).strip() or f"pytest 종료 코드: {result.returncode}"
+
+    def git_status(self) -> str:
+        return self._run_readonly(["git", "status", "--short"], "Git 상태를 확인하지 못했습니다") or "변경 사항이 없습니다."
+
+    def git_diff(self) -> str:
+        return self._run_readonly(["git", "diff", "--"], "Git diff를 확인하지 못했습니다") or "현재 diff가 없습니다."
+
+    def run_validation(self) -> str:
+        """Run project tests without accepting arbitrary user-supplied commands."""
+        commands = [[sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"]]
+        results = []
+        for command in commands:
+            try:
+                result = subprocess.run(command, cwd=self.root, text=True, capture_output=True, timeout=120)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                results.append(f"검증 실패: {exc}")
+                continue
+            output = (result.stdout + result.stderr).strip()
+            results.append(f"$ {' '.join(command)}\n{output or f'종료 코드: {result.returncode}'}")
+        return "\n\n".join(results)
+
+    def _run_readonly(self, command: list[str], error: str) -> str:
+        try:
+            result = subprocess.run(command, cwd=self.root, text=True, capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"{error}: {exc}"
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            return f"{error}: {detail or f'종료 코드: {result.returncode}'}"
+        return result.stdout.strip()
