@@ -30,6 +30,7 @@ try:
         QLineEdit,
         QMessageBox,
         QHBoxLayout,
+        QPlainTextEdit,
         QPushButton,
         QSplitter,
         QStatusBar,
@@ -196,6 +197,10 @@ class MainWindow(QMainWindow):
         self.workspace_list = QListWidget(); self.workspace_list.setObjectName("workspaceList"); self.workspace_list.itemClicked.connect(self._select_workspace); left_layout.addWidget(self.workspace_list, 1)
         remove_workspace = QPushButton("선택 작업 공간 제거"); remove_workspace.setObjectName("secondaryButton"); remove_workspace.clicked.connect(self._remove_workspace); left_layout.addWidget(remove_workspace)
         self._refresh_workspaces()
+        left_layout.addWidget(self._title("USAGE"))
+        self.usage_label = QLabel("사용량 확인 중…"); self.usage_label.setObjectName("infoCard"); self.usage_label.setWordWrap(True); left_layout.addWidget(self.usage_label)
+        refresh_usage = QPushButton("사용량 새로고침"); refresh_usage.setObjectName("secondaryButton"); refresh_usage.clicked.connect(self._load_usage); left_layout.addWidget(refresh_usage)
+        self.reset_credit_button = QPushButton("사용량 초기화권 사용"); self.reset_credit_button.setObjectName("primaryButton"); self.reset_credit_button.clicked.connect(self._consume_reset_credit); self.reset_credit_button.setEnabled(False); left_layout.addWidget(self.reset_credit_button)
 
         center = QWidget(); center.setObjectName("centerPanel"); center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(16, 18, 16, 16); center_layout.setSpacing(10)
@@ -216,17 +221,14 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.terminal, 1)
         self._refresh_workspace_tabs()
 
-        right = QWidget(); right.setObjectName("usagePanel"); right_layout = QVBoxLayout(right)
+        right = QWidget(); right.setObjectName("filePanel"); right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(16, 18, 16, 16); right_layout.setSpacing(10)
-        right_layout.addWidget(self._title("USAGE"))
-        self.usage_label = QLabel("사용량 확인 중…"); self.usage_label.setObjectName("infoCard"); self.usage_label.setWordWrap(True); right_layout.addWidget(self.usage_label)
-        refresh_usage = QPushButton("사용량 새로고침"); refresh_usage.setObjectName("secondaryButton"); refresh_usage.clicked.connect(self._load_usage); right_layout.addWidget(refresh_usage)
-        self.reset_credit_button = QPushButton("사용량 초기화권 사용"); self.reset_credit_button.setObjectName("primaryButton"); self.reset_credit_button.clicked.connect(self._consume_reset_credit); self.reset_credit_button.setEnabled(False); right_layout.addWidget(self.reset_credit_button)
         right_layout.addWidget(self._title("FILES"))
         self.file_search = QLineEdit(); self.file_search.setObjectName("searchBox"); self.file_search.setPlaceholderText("파일 찾기…"); self.file_search.textChanged.connect(self._filter_files); right_layout.addWidget(self.file_search)
-        self.files = QTreeWidget(); self.files.setObjectName("fileTree"); self.files.setHeaderHidden(True); self.files.setUniformRowHeights(True); self.files.itemExpanded.connect(self._expand_folder); right_layout.addWidget(self.files, 1)
+        self.files = QTreeWidget(); self.files.setObjectName("fileTree"); self.files.setHeaderHidden(True); self.files.setUniformRowHeights(True); self.files.itemClicked.connect(self._preview_file); self.files.itemExpanded.connect(self._expand_folder); right_layout.addWidget(self.files, 1)
         refresh = QPushButton("파일 새로고침"); refresh.setObjectName("secondaryButton"); refresh.clicked.connect(self._refresh_files); right_layout.addWidget(refresh)
-        right_layout.addStretch(1)
+        right_layout.addWidget(self._title("PREVIEW"))
+        self.preview = QPlainTextEdit(); self.preview.setObjectName("preview"); self.preview.setReadOnly(True); self.preview.setPlaceholderText("파일을 선택하면 미리보기가 표시됩니다."); right_layout.addWidget(self.preview, 1)
 
         root.addWidget(left); root.addWidget(center); root.addWidget(right); root.setSizes([300, 820, 330])
         self.setStatusBar(QStatusBar()); self.statusBar().showMessage("준비됨")
@@ -535,6 +537,17 @@ class MainWindow(QMainWindow):
         except (ValueError, OSError) as exc:
             item.addChild(QTreeWidgetItem([f"읽기 실패: {exc}"]))
 
+    def _preview_file(self, item: QListWidgetItem) -> None:
+        relative = item.data(0, Qt.ItemDataRole.UserRole)
+        if not item.data(0, Qt.ItemDataRole.UserRole + 1):
+            item.setExpanded(not item.isExpanded())
+            self.preview.setPlainText(f"폴더: {relative}")
+            return
+        try:
+            self.preview.setPlainText(self.tools.read_file(relative))
+        except (ValueError, FileNotFoundError, UnicodeDecodeError) as exc:
+            self.preview.setPlainText(str(exc))
+
     def _choose_workspace(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "작업 공간 선택", str(self.workspace))
         if selected:
@@ -547,7 +560,7 @@ class MainWindow(QMainWindow):
         QWidget { background:#202124; color:#e7e8ea; font-size:13px; }
         QWidget#sidebar { background:#292a2c; }
         QWidget#centerPanel { background:#222428; }
-        QWidget#usagePanel { background:#242527; }
+        QWidget#filePanel { background:#242527; }
         QSplitter::handle { background:#3a3b3e; width:1px; }
         QLabel#brand { color:#f0f1f2; font-size:15px; font-weight:700; padding:2px 0 10px; }
         QLabel#navLabel { color:#b7bbc0; background:#343638; border:1px solid #44474a; border-radius:5px; padding:8px 10px; }
@@ -557,10 +570,10 @@ class MainWindow(QMainWindow):
         QLabel#infoCard { color:#d0d2d5; background:#1b1c1e; border:1px solid #3b3d40; border-radius:6px; padding:11px 12px; line-height:1.35em; }
         QLabel#hint { color:#85898f; font-size:11px; padding-top:2px; }
         QLabel { color:#d3d5d8; }
-        QLineEdit, QListWidget, QTreeWidget, QWebEngineView { background:#1e2022; border:1px solid #3a3c40; border-radius:6px; }
+        QLineEdit, QListWidget, QTreeWidget, QPlainTextEdit, QWebEngineView { background:#1e2022; border:1px solid #3a3c40; border-radius:6px; }
         QLineEdit { padding:8px 10px; color:#e7e8ea; selection-background-color:#3f454a; }
         QLineEdit:focus { border:1px solid #68b89a; }
-        QListWidget, QTreeWidget { padding:6px; }
+        QListWidget, QTreeWidget, QPlainTextEdit { padding:6px; }
         QListWidget::item, QTreeWidget::item { padding:6px 8px; border-radius:4px; }
         QListWidget::item:hover, QTreeWidget::item:hover { background:#35373a; }
         QListWidget::item:selected, QTreeWidget::item:selected { background:#3b3f43; color:#ffffff; border-left:2px solid #62c39d; }
