@@ -3,6 +3,7 @@ from datetime import datetime
 from dataclasses import dataclass
 import difflib
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -14,10 +15,11 @@ from uuid import uuid4
 if sys.platform == "darwin":
     os.environ.setdefault(
         "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--disable-gpu --disable-gpu-compositing --disable-logging --log-level=3",
+        "--disable-logging --log-level=3",
     )
 
 from .tools import WorkspaceTools
+from .diagnostics import collect_diagnostics
 from .model_catalog import consume_codex_reset_credit, fetch_codex_rate_limits
 from .session_state import WorkspaceStateStore
 from .terminal import TerminalSession
@@ -59,6 +61,7 @@ TERMINAL_HTML = """<!doctype html>
 <link rel="stylesheet" href="css/xterm.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-search@0.13.0/lib/xterm-addon-search.min.js"></script>
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <style>html,body,#terminals{height:100%;margin:0;background:#0d141d;overflow:hidden}.terminal{height:100%;padding:14px;box-sizing:border-box}.terminal.hidden{display:none}</style>
 </head><body><div id="terminals"></div><script>
@@ -69,14 +72,25 @@ new QWebChannel(qt.webChannelTransport, function(channel) {
     if (terminals.has(key)) return terminals.get(key);
     const host = document.createElement('div'); host.className = 'terminal hidden'; document.getElementById('terminals').appendChild(host);
     const term = new Terminal({cursorBlink:true, convertEol:true, fontFamily:'Menlo, Monaco, Consolas, monospace', fontSize:14, theme:{background:'#0d141d', foreground:'#dce7e5', cursor:'#8ee0bd', selectionBackground:'#29483f'}});
-    const fit = new FitAddon.FitAddon(); term.loadAddon(fit); term.open(host);
-    term.onData(data => { if (activeKey === key) bridge.write(data); });
-    terminals.set(key, {term, fit, host}); return terminals.get(key);
+    const fit = new FitAddon.FitAddon(); const search = new SearchAddon.SearchAddon(); term.loadAddon(fit); term.loadAddon(search); term.open(host);
+    if (term.textarea) { term.textarea.setAttribute('autocomplete','off'); term.textarea.setAttribute('autocorrect','off'); term.textarea.setAttribute('autocapitalize','off'); term.textarea.setAttribute('spellcheck','false'); }
+    term.onData(data => { if (activeKey === key) bridge.writeTo(key, data); });
+    term.attachCustomKeyEventHandler(event => {
+      if (event.type !== 'keydown') return true;
+      const modifier = event.ctrlKey || event.metaKey;
+      if (modifier && event.key.toLowerCase() === 'c' && term.hasSelection()) { bridge.copy(term.getSelection()); return false; }
+      if (modifier && event.key.toLowerCase() === 'v') { bridge.paste(text => term.paste(text)); return false; }
+      return true;
+    });
+    terminals.set(key, {term, fit, search, host}); return terminals.get(key);
   };
   const activate = key => { activeKey = key; terminals.forEach(item => item.host.className = 'terminal hidden'); const item = getTerminal(key); item.host.className = 'terminal'; item.fit.fit(); bridge.resize(item.term.cols, item.term.rows); item.term.focus(); };
   const resize = () => { const item = terminals.get(activeKey); if (item) { item.fit.fit(); bridge.resize(item.term.cols, item.term.rows); } };
   bridge.activeChanged.connect(activate);
   bridge.output.connect((key, data) => getTerminal(key).term.write(data));
+  window.searchActiveTerminal = query => { const item = terminals.get(activeKey); if (item && query) { item.search.findNext(query); item.term.focus(); } };
+  window.clearActiveTerminal = () => { const item = terminals.get(activeKey); if (item) { item.term.clear(); item.term.focus(); } };
+  window.adjustTerminalFontSize = delta => { const item = terminals.get(activeKey); if (item) { item.term.options.fontSize = Math.max(10, Math.min(22, item.term.options.fontSize + delta)); item.fit.fit(); bridge.resize(item.term.cols, item.term.rows); item.term.focus(); } };
   bridge.ready();
   window.addEventListener('resize', resize);
 });
@@ -107,33 +121,41 @@ class TerminalBridge(QObject):
         self.ready_for_output = False
         self.pending_output = []
 
-    def emit_output(self, workspace: str, text: str) -> None:
+    def emit_output(self, session_id: str, text: str) -> None:
         if not self.ready_for_output:
-            self.pending_output.append((workspace, text))
+            self.pending_output.append((session_id, text))
             return
-        self.output.emit(workspace, text)
+        self.output.emit(session_id, text)
 
-    def set_active(self, workspace: str) -> None:
+    def set_active(self, session_id: str) -> None:
         if self.ready_for_output:
-            self.activeChanged.emit(workspace)
+            self.activeChanged.emit(session_id)
         else:
-            self.window.terminal_active = workspace
+            self.window.terminal_active = session_id
 
     @Slot()
     def ready(self) -> None:
         self.ready_for_output = True
         self.activeChanged.emit(self.window.terminal_active)
-        for workspace, text in self.pending_output:
-            self.output.emit(workspace, text)
+        for session_id, text in self.pending_output:
+            self.output.emit(session_id, text)
         self.pending_output = []
 
-    @Slot(str)
-    def write(self, text: str) -> None:
-        self.window._write_terminal(text)
+    @Slot(str, str)
+    def writeTo(self, session_id: str, text: str) -> None:
+        self.window._write_terminal_to(session_id, text)
 
     @Slot(int, int)
     def resize(self, columns: int, rows: int) -> None:
         self.window._resize_terminal(columns, rows)
+
+    @Slot(str)
+    def copy(self, text: str) -> None:
+        QApplication.clipboard().setText(text)
+
+    @Slot(result=str)
+    def paste(self) -> str:
+        return QApplication.clipboard().text()
 
 
 class FileScanWorker(QThread):
@@ -165,6 +187,53 @@ class FileChangeWorker(QThread):
         try:
             files, directories = WorkspaceTools(self.workspace).scan_tree(file_limit=100_000, directory_limit=10_000)
             self.scanned.emit(files, directories, str(self.workspace))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class GitStatusWorker(QThread):
+    loaded = Signal(object, str)
+    failed = Signal(str)
+
+    def __init__(self, workspace: Path):
+        super().__init__()
+        self.workspace = workspace
+
+    def run(self) -> None:
+        try:
+            self.loaded.emit(WorkspaceTools(self.workspace).git_snapshot(), str(self.workspace))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class GitDiffWorker(QThread):
+    loaded = Signal(str, str)
+    failed = Signal(str)
+
+    def __init__(self, workspace: Path, relative: str):
+        super().__init__()
+        self.workspace = workspace
+        self.relative = relative
+
+    def run(self) -> None:
+        try:
+            diff = WorkspaceTools(self.workspace).git_diff_file(self.relative)
+            self.loaded.emit(self.relative, diff)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class DiagnosticsWorker(QThread):
+    loaded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, workspace: Path):
+        super().__init__()
+        self.workspace = workspace
+
+    def run(self) -> None:
+        try:
+            self.loaded.emit(collect_diagnostics(self.workspace))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -212,6 +281,12 @@ class MainWindow(QMainWindow):
         self.tools = WorkspaceTools(self.workspace)
         self.scan_worker = None
         self.scan_workers = []
+        self.git_status_worker = None
+        self.git_diff_worker = None
+        self.git_entries = {}
+        self.git_branch_name = ""
+        self.git_available = False
+        self.diagnostics_worker = None
         self.usage_worker = None
         self.reset_credit_worker = None
         self.reset_credit_id = ""
@@ -236,7 +311,10 @@ class MainWindow(QMainWindow):
         self.change_timer = QTimer(self)
         self.change_timer.setInterval(2000)
         self.change_timer.timeout.connect(self._check_file_changes)
+        self.change_timer.timeout.connect(self._check_git_status)
         self.change_timer.start()
+        self._check_git_status()
+        self._load_diagnostics()
         self._load_usage()
 
     def _build_ui(self) -> None:
@@ -252,6 +330,7 @@ class MainWindow(QMainWindow):
         self.workspace_label = QLabel(str(self.workspace))
         self.workspace_label.setObjectName("workspacePath")
         self.workspace_label.setWordWrap(True); left_layout.addWidget(self.workspace_label)
+        self.git_status_label = QLabel("Git 상태 확인 중…"); self.git_status_label.setObjectName("gitStatus"); self.git_status_label.setWordWrap(True); left_layout.addWidget(self.git_status_label)
         open_button = QPushButton("＋  작업 공간 추가"); open_button.setObjectName("primaryButton"); open_button.clicked.connect(self._choose_workspace); left_layout.addWidget(open_button)
         self.workspace_list = QListWidget(); self.workspace_list.setObjectName("workspaceList"); self.workspace_list.itemClicked.connect(self._select_workspace); left_layout.addWidget(self.workspace_list, 1)
         remove_workspace = QPushButton("선택 작업 공간 제거"); remove_workspace.setObjectName("secondaryButton"); remove_workspace.clicked.connect(self._remove_workspace); left_layout.addWidget(remove_workspace)
@@ -262,6 +341,9 @@ class MainWindow(QMainWindow):
         self.secondary_usage_bar = QProgressBar(); self.secondary_usage_bar.setObjectName("usageBar"); self.secondary_usage_bar.setRange(0, 100); self.secondary_usage_bar.setTextVisible(True); self.secondary_usage_bar.hide(); left_layout.addWidget(self.secondary_usage_bar)
         refresh_usage = QPushButton("사용량 새로고침"); refresh_usage.setObjectName("secondaryButton"); refresh_usage.clicked.connect(self._load_usage); left_layout.addWidget(refresh_usage)
         self.reset_credit_button = QPushButton("사용량 초기화권 사용"); self.reset_credit_button.setObjectName("primaryButton"); self.reset_credit_button.clicked.connect(self._consume_reset_credit); self.reset_credit_button.setEnabled(False); left_layout.addWidget(self.reset_credit_button)
+        left_layout.addWidget(self._title("진단"))
+        self.diagnostic_label = QLabel("진단 확인 중…"); self.diagnostic_label.setObjectName("diagnosticCard"); self.diagnostic_label.setWordWrap(True); left_layout.addWidget(self.diagnostic_label)
+        refresh_diagnostics = QPushButton("진단 새로고침"); refresh_diagnostics.setObjectName("secondaryButton"); refresh_diagnostics.clicked.connect(self._load_diagnostics); left_layout.addWidget(refresh_diagnostics)
 
         center = QWidget(); center.setObjectName("centerPanel"); center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(16, 18, 16, 16); center_layout.setSpacing(10)
@@ -269,21 +351,27 @@ class MainWindow(QMainWindow):
         center_header_layout.addWidget(self._title("터미널"))
         self.workspace_tabs = QTabBar(); self.workspace_tabs.setObjectName("workspaceTabs"); self.workspace_tabs.setExpanding(False); self.workspace_tabs.setMovable(False); self.workspace_tabs.currentChanged.connect(self._select_workspace_tab); center_header_layout.addWidget(self.workspace_tabs)
         center_header_layout.addStretch(1)
-        self.restart_button = QPushButton("↻"); self.restart_button.setObjectName("iconButton"); self.restart_button.setFixedSize(30, 28); self.restart_button.setToolTip("현재 작업 공간의 Codex 세션을 다시 시작합니다."); self.restart_button.clicked.connect(self._restart_terminal); center_header_layout.addWidget(self.restart_button)
-        self.stop_button = QPushButton("■"); self.stop_button.setObjectName("dangerIconButton"); self.stop_button.setFixedSize(30, 28); self.stop_button.setToolTip("현재 작업 공간의 Codex 세션을 중지합니다."); self.stop_button.clicked.connect(self._stop_active_terminal); center_header_layout.addWidget(self.stop_button)
+        self.restart_button = QPushButton("↻"); self.restart_button.setObjectName("iconButton"); self.restart_button.setFixedSize(34, 34); self.restart_button.setToolTip("현재 작업 공간의 Codex 세션을 다시 시작합니다."); self.restart_button.clicked.connect(self._restart_terminal); center_header_layout.addWidget(self.restart_button)
+        self.stop_button = QPushButton("■"); self.stop_button.setObjectName("dangerIconButton"); self.stop_button.setFixedSize(34, 34); self.stop_button.setToolTip("현재 작업 공간의 Codex 세션을 중지합니다."); self.stop_button.clicked.connect(self._stop_active_terminal); center_header_layout.addWidget(self.stop_button)
+        self.search_terminal_button = QPushButton("⌕"); self.search_terminal_button.setObjectName("iconButton"); self.search_terminal_button.setFixedSize(34, 34); self.search_terminal_button.setToolTip("터미널 출력에서 검색합니다."); self.search_terminal_button.clicked.connect(self._search_terminal); center_header_layout.addWidget(self.search_terminal_button)
+        self.clear_terminal_button = QPushButton("지우기"); self.clear_terminal_button.setObjectName("compactButton"); self.clear_terminal_button.setFixedSize(68, 34); self.clear_terminal_button.setToolTip("현재 터미널 화면을 지웁니다."); self.clear_terminal_button.clicked.connect(self._clear_terminal); center_header_layout.addWidget(self.clear_terminal_button)
+        self.decrease_font_button = QPushButton("A−"); self.decrease_font_button.setObjectName("iconButton"); self.decrease_font_button.setFixedSize(34, 34); self.decrease_font_button.setToolTip("터미널 글자를 작게 합니다."); self.decrease_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(-1)); center_header_layout.addWidget(self.decrease_font_button)
+        self.increase_font_button = QPushButton("A+"); self.increase_font_button.setObjectName("iconButton"); self.increase_font_button.setFixedSize(34, 34); self.increase_font_button.setToolTip("터미널 글자를 크게 합니다."); self.increase_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(1)); center_header_layout.addWidget(self.increase_font_button)
         center_layout.addWidget(center_header)
         session_header = QWidget(); session_header_layout = QHBoxLayout(session_header); session_header_layout.setContentsMargins(0, 0, 0, 0); session_header_layout.setSpacing(6)
         session_header_layout.addWidget(self._title("세션"))
         self.session_tabs = QTabBar(); self.session_tabs.setObjectName("sessionTabs"); self.session_tabs.setExpanding(False); self.session_tabs.setMovable(False); self.session_tabs.currentChanged.connect(self._select_session_tab); session_header_layout.addWidget(self.session_tabs, 1)
-        self.new_session_button = QPushButton("＋"); self.new_session_button.setObjectName("iconButton"); self.new_session_button.setFixedSize(30, 28); self.new_session_button.setToolTip("현재 작업 공간에 새 Codex 세션을 만듭니다."); self.new_session_button.clicked.connect(self._new_session); session_header_layout.addWidget(self.new_session_button)
-        self.rename_session_button = QPushButton("이름"); self.rename_session_button.setObjectName("secondaryButton"); self.rename_session_button.setFixedSize(48, 28); self.rename_session_button.clicked.connect(self._rename_session); session_header_layout.addWidget(self.rename_session_button)
-        self.close_session_button = QPushButton("×"); self.close_session_button.setObjectName("dangerIconButton"); self.close_session_button.setFixedSize(30, 28); self.close_session_button.setToolTip("현재 세션을 닫습니다."); self.close_session_button.clicked.connect(self._close_session); session_header_layout.addWidget(self.close_session_button)
+        self.new_session_button = QPushButton("＋"); self.new_session_button.setObjectName("iconButton"); self.new_session_button.setFixedSize(34, 34); self.new_session_button.setToolTip("현재 작업 공간에 새 Codex 세션을 만듭니다."); self.new_session_button.clicked.connect(self._new_session); session_header_layout.addWidget(self.new_session_button)
+        self.rename_session_button = QPushButton("이름"); self.rename_session_button.setObjectName("compactButton"); self.rename_session_button.setFixedSize(56, 34); self.rename_session_button.clicked.connect(self._rename_session); session_header_layout.addWidget(self.rename_session_button)
+        self.close_session_button = QPushButton("×"); self.close_session_button.setObjectName("dangerIconButton"); self.close_session_button.setFixedSize(34, 34); self.close_session_button.setToolTip("현재 세션을 닫습니다."); self.close_session_button.clicked.connect(self._close_session); session_header_layout.addWidget(self.close_session_button)
         center_layout.addWidget(session_header)
         self.session_notice = QLabel(); self.session_notice.setObjectName("sessionNotice"); self.session_notice.setWordWrap(True); center_layout.addWidget(self.session_notice)
         self.activity = QLabel("● Codex CLI 터미널")
         self.activity.setObjectName("activity")
         center_layout.addWidget(self.activity)
         self.terminal = QWebEngineView()
+        self.terminal.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
+        self.terminal.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.terminal_bridge = TerminalBridge(self)
         self.terminal_channel = QWebChannel(self.terminal)
         self.terminal_channel.registerObject("bridge", self.terminal_bridge)
@@ -305,6 +393,7 @@ class MainWindow(QMainWindow):
         self.preview_title = QLabel("파일을 선택하세요"); self.preview_title.setObjectName("previewTitle"); right_layout.addWidget(self.preview_title)
         self.preview = QPlainTextEdit(); self.preview.setObjectName("preview"); self.preview.setReadOnly(True); self.preview.setPlaceholderText("파일을 선택하면 미리보기가 표시됩니다."); right_layout.addWidget(self.preview, 1)
         self.open_file_button = QPushButton("기본 앱에서 열기"); self.open_file_button.setObjectName("secondaryButton"); self.open_file_button.setEnabled(False); self.open_file_button.clicked.connect(self._open_preview_file); right_layout.addWidget(self.open_file_button)
+        self.git_diff_button = QPushButton("Git Diff 보기"); self.git_diff_button.setObjectName("secondaryButton"); self.git_diff_button.setEnabled(False); self.git_diff_button.clicked.connect(self._show_git_diff); right_layout.addWidget(self.git_diff_button)
         change_actions = QWidget(); change_actions_layout = QHBoxLayout(change_actions); change_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.approve_change_button = QPushButton("변경 승인"); self.approve_change_button.setObjectName("primaryButton"); self.approve_change_button.setEnabled(False); self.approve_change_button.clicked.connect(self._approve_change); change_actions_layout.addWidget(self.approve_change_button)
         self.rollback_change_button = QPushButton("되돌리기"); self.rollback_change_button.setObjectName("dangerButton"); self.rollback_change_button.setEnabled(False); self.rollback_change_button.clicked.connect(self._rollback_change); change_actions_layout.addWidget(self.rollback_change_button)
@@ -475,6 +564,17 @@ class MainWindow(QMainWindow):
             session.stop()
         self._start_terminal()
 
+    def _search_terminal(self) -> None:
+        query, accepted = QInputDialog.getText(self, "터미널 검색", "검색어")
+        if accepted and query:
+            self.terminal.page().runJavaScript(f"window.searchActiveTerminal({json.dumps(query, ensure_ascii=False)});")
+
+    def _clear_terminal(self) -> None:
+        self.terminal.page().runJavaScript("window.clearActiveTerminal();")
+
+    def _adjust_terminal_font_size(self, delta: int) -> None:
+        self.terminal.page().runJavaScript(f"window.adjustTerminalFontSize({int(delta)});")
+
     def _stop_active_terminal(self) -> None:
         session = self.terminal_sessions.get(self.terminal_active)
         if session is None:
@@ -503,7 +603,10 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Codex CLI 세션 종료됨")
 
     def _write_terminal(self, text: str) -> None:
-        session = self.terminal_sessions.get(self.terminal_active)
+        self._write_terminal_to(self.terminal_active, text)
+
+    def _write_terminal_to(self, session_id: str, text: str) -> None:
+        session = self.terminal_sessions.get(session_id)
         if session is not None and session.alive():
             try:
                 session.write(text)
@@ -522,7 +625,7 @@ class MainWindow(QMainWindow):
             self.terminal_timer.stop()
         for session in self.terminal_sessions.values():
             session.stop()
-        for worker in (self.scan_worker, self.change_scan_worker, self.usage_worker, self.reset_credit_worker):
+        for worker in (self.scan_worker, self.change_scan_worker, self.git_status_worker, self.git_diff_worker, self.diagnostics_worker, self.usage_worker, self.reset_credit_worker):
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
                 worker.quit()
@@ -547,6 +650,24 @@ class MainWindow(QMainWindow):
         self.usage_worker.loaded.connect(self._usage_loaded)
         self.usage_worker.failed.connect(lambda message: self.usage_label.setText(f"사용량을 불러오지 못했습니다.\n{message}"))
         self.usage_worker.start()
+
+    def _load_diagnostics(self) -> None:
+        if self.diagnostics_worker is not None and self.diagnostics_worker.isRunning():
+            return
+        self.diagnostic_label.setText("진단 확인 중…")
+        self.diagnostics_worker = DiagnosticsWorker(self.workspace)
+        self.diagnostics_worker.loaded.connect(self._diagnostics_loaded)
+        self.diagnostics_worker.failed.connect(lambda message: self.diagnostic_label.setText(f"진단 실패\n{message}"))
+        self.diagnostics_worker.finished.connect(self._diagnostics_finished)
+        self.diagnostics_worker.start()
+
+    def _diagnostics_finished(self) -> None:
+        if self.diagnostics_worker is not None:
+            self.diagnostics_worker.deleteLater()
+            self.diagnostics_worker = None
+
+    def _diagnostics_loaded(self, diagnostics: dict[str, str]) -> None:
+        self.diagnostic_label.setText("\n".join(f"{label}  {value}" for label, value in diagnostics.items()))
 
     def _usage_loaded(self, payload) -> None:
         snapshot = payload.get("rateLimits") or {}
@@ -681,6 +802,66 @@ class MainWindow(QMainWindow):
         self.change_scan_worker.finished.connect(self._change_scan_finished)
         self.change_scan_worker.start()
 
+    def _check_git_status(self) -> None:
+        if self.git_status_worker is not None and self.git_status_worker.isRunning():
+            return
+        self.git_status_worker = GitStatusWorker(self.workspace)
+        self.git_status_worker.loaded.connect(self._git_status_loaded)
+        self.git_status_worker.failed.connect(lambda message: self.git_status_label.setText(f"Git 상태 확인 실패\n{message}"))
+        self.git_status_worker.finished.connect(self._git_status_finished)
+        self.git_status_worker.start()
+
+    def _git_status_finished(self) -> None:
+        if self.git_status_worker is not None:
+            self.git_status_worker.deleteLater()
+            self.git_status_worker = None
+
+    def _git_status_loaded(self, snapshot: dict, workspace: str) -> None:
+        if workspace != str(self.workspace):
+            return
+        self.git_available = bool(snapshot.get("available"))
+        self.git_branch_name = snapshot.get("branch", "")
+        self.git_entries = snapshot.get("entries", {}) if self.git_available else {}
+        if not self.git_available:
+            self.git_status_label.setText("Git 저장소 아님")
+        else:
+            staged = sum(code[0] not in {" ", "?"} for code in self.git_entries.values())
+            unstaged = sum(code[1] not in {" ", "?"} or code == "??" for code in self.git_entries.values())
+            self.git_status_label.setText(
+                f"브랜치  {self.git_branch_name}\n"
+                f"변경 {len(self.git_entries):,}개 · staged {staged:,} · unstaged {unstaged:,}"
+            )
+        self._refresh_changed_list()
+        self._update_git_diff_button()
+
+    def _update_git_diff_button(self) -> None:
+        self.git_diff_button.setEnabled(bool(self.preview_relative and self.preview_relative in self.git_entries))
+
+    def _show_git_diff(self) -> None:
+        relative = self.preview_relative
+        if not relative or relative not in self.git_entries:
+            return
+        if self.git_diff_worker is not None and self.git_diff_worker.isRunning():
+            return
+        self.git_diff_button.setEnabled(False)
+        self.git_diff_worker = GitDiffWorker(self.workspace, relative)
+        self.git_diff_worker.loaded.connect(self._git_diff_loaded)
+        self.git_diff_worker.failed.connect(lambda message: self.statusBar().showMessage(f"Git Diff 확인 실패: {message}"))
+        self.git_diff_worker.finished.connect(self._git_diff_finished)
+        self.git_diff_worker.start()
+
+    def _git_diff_finished(self) -> None:
+        if self.git_diff_worker is not None:
+            self.git_diff_worker.deleteLater()
+            self.git_diff_worker = None
+
+    def _git_diff_loaded(self, relative: str, diff: str) -> None:
+        if relative != self.preview_relative:
+            return
+        self.preview_title.setText(f"Git Diff · {Path(relative).name}")
+        self.preview.setPlainText(diff or "Git 기준 변경 내용이 없습니다.")
+        self._update_git_diff_button()
+
     def _change_scan_finished(self) -> None:
         if self.change_scan_worker is not None:
             self.change_scan_worker.deleteLater()
@@ -755,6 +936,7 @@ class MainWindow(QMainWindow):
                 self.preview.setPlainText(f"Diff를 표시하지 못했습니다.\n{exc}")
         self.approve_change_button.setEnabled(True)
         self.rollback_change_button.setEnabled(is_new or old_content is not None)
+        self._update_git_diff_button()
         self._update_bulk_change_buttons()
 
     def _refresh_changed_list(self) -> None:
@@ -775,7 +957,18 @@ class MainWindow(QMainWindow):
                 kind = "바이너리" if baseline_map[relative].is_binary else "대용량"
             else:
                 kind = "변경"
-            item = QListWidgetItem(f"{kind}  {relative}")
+            git_code = self.git_entries.get(relative)
+            git_kind = ""
+            if git_code:
+                if git_code == "??":
+                    git_kind = " · Git 미추적"
+                elif git_code[0] != " " and git_code[1] != " ":
+                    git_kind = " · Git staged+수정"
+                elif git_code[0] != " ":
+                    git_kind = " · Git staged"
+                elif git_code[1] != " ":
+                    git_kind = " · Git 수정"
+            item = QListWidgetItem(f"{kind}{git_kind}  {relative}")
             item.setData(Qt.ItemDataRole.UserRole, relative)
             self.changed_list.addItem(item)
 
@@ -980,6 +1173,7 @@ class MainWindow(QMainWindow):
         self.changed_files = set()
         self.preview_path = None
         self.preview_relative = None
+        self.git_diff_button.setEnabled(False)
         self.preview_title.setText("파일을 선택하세요")
         self.preview.clear()
         self.open_file_button.setEnabled(False)
@@ -1111,6 +1305,7 @@ class MainWindow(QMainWindow):
             self.preview_path = None
             self.preview_relative = None
             self.open_file_button.setEnabled(False)
+            self.git_diff_button.setEnabled(False)
             self.preview_title.setText(f"폴더 · {relative}")
             self.preview.setPlainText(f"폴더: {relative}")
             return
@@ -1132,6 +1327,7 @@ class MainWindow(QMainWindow):
             self.rollback_change_button.setEnabled(False)
             self.open_file_button.setEnabled(True)
             self.open_file_button.setText(f"기본 앱에서 열기 · {path.name}")
+            self._update_git_diff_button()
             self.preview_title.setText(f"{path.name}  ·  {path.stat().st_size:,} bytes")
             data = path.read_bytes()
             if b"\x00" in data[:8192]:
@@ -1150,6 +1346,7 @@ class MainWindow(QMainWindow):
                 )
         except (ValueError, FileNotFoundError, OSError) as exc:
             self.preview_path = None
+            self.git_diff_button.setEnabled(False)
             self.open_file_button.setEnabled(False)
             self.preview_title.setText("미리보기 오류")
             self.preview.setPlainText(str(exc))
@@ -1179,6 +1376,8 @@ class MainWindow(QMainWindow):
         QLabel#brandSubtitle { color:#76918c; font-size:9px; font-weight:700; letter-spacing:1.4px; padding-bottom:10px; }
         QLabel#section { color:#78928e; font-size:10px; font-weight:800; letter-spacing:1.5px; padding-top:10px; padding-bottom:3px; }
         QLabel#workspacePath { color:#9cb1ad; font-size:11px; padding:3px 0 5px; }
+        QLabel#gitStatus { color:#9fb9b4; background:#101820; border:1px solid #2a3a43; border-radius:8px; padding:9px 10px; }
+        QLabel#diagnosticCard { color:#b8cbc6; background:#101820; border:1px solid #2a3a43; border-radius:8px; padding:9px 10px; }
         QLabel#activity { color:#bdf4d9; background:#17362f; border:1px solid #2c795f; border-radius:8px; padding:9px 12px; font-weight:700; }
         QLabel#sessionNotice { color:#f5d99b; background:#342c1d; border:1px solid #765f35; border-radius:8px; padding:8px 11px; }
         QLabel#infoCard { color:#c5d5d1; background:#101820; border:1px solid #2a3a43; border-radius:8px; padding:12px; line-height:1.4em; }
@@ -1198,6 +1397,9 @@ class MainWindow(QMainWindow):
         QPushButton:disabled { background:#1a252c; border-color:#29383f; color:#667b7c; }
         QPushButton#primaryButton { background:#28755d; border-color:#4fb68e; color:#f1fff9; }
         QPushButton#primaryButton:hover { background:#33916f; border-color:#79dfb6; }
+        QPushButton#compactButton { background:#1d2a33; border:1px solid #344a55; border-radius:7px; padding:0 8px; color:#bcd0cc; font-size:12px; font-weight:650; }
+        QPushButton#compactButton:hover { background:#294049; border-color:#5f7e82; color:#f1fffb; }
+        QPushButton#compactButton:disabled { background:#1a252c; border-color:#29383f; color:#667b7c; }
         QPushButton#secondaryButton { background:#1d2a33; border-color:#344a55; color:#bcd0cc; }
         QPushButton#secondaryButton:hover { background:#294049; border-color:#5f7e82; color:#f1fffb; }
         QPushButton#dangerButton { background:#432c32; border-color:#754c57; color:#f2c8cc; }

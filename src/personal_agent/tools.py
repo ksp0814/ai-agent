@@ -61,6 +61,73 @@ class WorkspaceTools:
     def git_diff(self) -> str:
         return self._run_readonly(["git", "diff", "--"], "Git diff를 확인하지 못했습니다") or "현재 diff가 없습니다."
 
+    def git_snapshot(self) -> dict:
+        """Return read-only branch and porcelain status information."""
+        try:
+            branch_result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=self.root,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                cwd=self.root,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"available": False, "message": str(exc), "branch": "", "entries": {}}
+        if branch_result.returncode != 0 or status_result.returncode != 0:
+            detail = (status_result.stderr or branch_result.stderr).strip()
+            return {"available": False, "message": detail or "Git 저장소가 아닙니다.", "branch": "", "entries": {}}
+        entries = {}
+        for line in status_result.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            code = line[:2]
+            relative = line[3:]
+            if " -> " in relative:
+                relative = relative.rsplit(" -> ", 1)[-1]
+            entries[relative] = code
+        branch = branch_result.stdout.strip() or "(detached HEAD)"
+        return {"available": True, "message": "", "branch": branch, "entries": entries}
+
+    def git_diff_file(self, relative: str) -> str:
+        """Return tracked, staged, or untracked diff for one contained file."""
+        path = self.resolve(relative)
+        outputs = []
+        for command in (
+            ["git", "diff", "--no-ext-diff", "--", relative],
+            ["git", "diff", "--cached", "--no-ext-diff", "--", relative],
+        ):
+            try:
+                result = subprocess.run(command, cwd=self.root, text=True, capture_output=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return f"Git Diff를 확인하지 못했습니다: {exc}"
+            if result.returncode == 0 and result.stdout:
+                outputs.append(result.stdout)
+        if outputs:
+            return "\n".join(outputs).rstrip()
+        if path.is_file() and not (self.root / ".git").exists():
+            return "Git 저장소가 아닙니다."
+        if path.is_file():
+            try:
+                result = subprocess.run(
+                    ["git", "diff", "--no-index", "--no-ext-diff", "--", os.devnull, relative],
+                    cwd=self.root,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return f"Git Diff를 확인하지 못했습니다: {exc}"
+            if result.stdout:
+                return result.stdout.rstrip()
+        return "Git 기준 변경 내용이 없습니다."
+
     def run_validation(self) -> str:
         """Run project tests without accepting arbitrary user-supplied commands."""
         commands = [[sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"]]

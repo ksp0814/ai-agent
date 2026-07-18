@@ -20,7 +20,7 @@ python -m pip install -e ".[desktop]"
 agent-desktop
 ```
 
-데스크톱 앱 중앙 화면은 xterm.js 터미널에서 실제 Codex CLI 세션을 표시합니다. macOS는 PTY, Windows는 ConPTY 기반으로 동작하며 모델과 reasoning effort는 Codex 설정을 사용합니다. 작업 공간마다 별도 Codex CLI 세션과 터미널 화면을 유지합니다. 파일 변경 승인은 중앙 터미널에서 Codex CLI 방식으로 처리됩니다.
+데스크톱 앱 중앙 화면은 xterm.js 터미널에서 실제 Codex CLI 세션을 표시합니다. macOS는 PTY, Windows는 ConPTY 기반으로 동작합니다. 작업 공간마다 별도 Codex CLI 세션과 터미널 화면을 유지합니다. 파일 변경 승인은 중앙 터미널에서 Codex CLI 방식으로 처리됩니다.
 
 LLM 없이도 기본 명령을 사용할 수 있습니다.
 
@@ -80,6 +80,10 @@ export OPENAI_BASE_URL="https://your-compatible-endpoint/v1"
 - 마지막 작업 공간 자동 복원 및 작업 공간별 Codex 세션 유지
 - 작업 공간별 Codex 세션 생성·전환·이름 변경·닫기
 - 여러 세션 사용 시 동일 파일 동시 수정 경고
+- 터미널 출력 검색·화면 지우기·글자 크기 조절·클립보드 단축키
+- xterm.js 기반 Codex CLI 터미널과 macOS PTY·Windows ConPTY 지원
+- Git 브랜치·변경 상태 표시 및 파일별 Git Diff 확인
+- Codex CLI·로그인·Git·PTY 환경 진단 및 진단 새로고침
 - Codex CLI 세션 중지·재시작과 macOS PTY·Windows ConPTY 지원
 - 다크 워크벤치 UI와 터미널 중심 레이아웃
 - 모델 계층 교체를 위한 `ModelProvider` 인터페이스
