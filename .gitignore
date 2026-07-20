@@ -6,5 +6,6 @@ __pycache__/
 .env.*
 !.env.example
 .pytest_cache/
+.idea/
 dist/
 *.egg-info/
