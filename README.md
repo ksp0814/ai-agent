@@ -20,6 +20,13 @@ python -m pip install -e ".[desktop]"
 agent-desktop
 ```
 
+가상환경을 매번 활성화하지 않고 실행하려면 프로젝트 루트의 런처를 사용합니다.
+
+- Windows: `run-agent-desktop.cmd` 더블클릭 또는 `.\run-agent-desktop.cmd`
+- macOS: `run-agent-desktop.command` 더블클릭 또는 `chmod +x run-agent-desktop.command` 후 실행
+
+런처는 프로젝트 루트를 작업 공간으로 지정하고, `.venv` 또는 데스크톱 패키지가 없으면 설치 명령을 안내합니다.
+
 데스크톱 앱 중앙 화면은 xterm.js 터미널에서 실제 Codex CLI 세션을 표시합니다. macOS는 PTY, Windows는 ConPTY 기반으로 동작합니다. 작업 공간마다 별도 Codex CLI 세션과 터미널 화면을 유지합니다. 파일 변경 승인은 중앙 터미널에서 Codex CLI 방식으로 처리됩니다.
 
 LLM 없이도 기본 명령을 사용할 수 있습니다.
