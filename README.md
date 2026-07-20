@@ -22,7 +22,7 @@ agent-desktop
 
 가상환경을 매번 활성화하지 않고 실행하려면 프로젝트 루트의 런처를 사용합니다.
 
-- Windows: `run-agent-desktop.cmd` 더블클릭 또는 `.\run-agent-desktop.cmd`
+- Windows: `run-agent-desktop.cmd` 더블클릭 또는 `.\run-agent-desktop.cmd` (콘솔 없이 데스크톱 앱만 표시)
 - macOS: `run-agent-desktop.command` 더블클릭 또는 `chmod +x run-agent-desktop.command` 후 실행
 
 런처는 프로젝트 루트를 작업 공간으로 지정하고, `.venv` 또는 데스크톱 패키지가 없으면 설치 명령을 안내합니다.

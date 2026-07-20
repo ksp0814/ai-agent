@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 set "WORKSPACE=%CD%"
 
-if not exist ".venv\Scripts\agent-desktop.exe" (
+if not exist ".venv\Scripts\pythonw.exe" (
     echo Personal Agent desktop launcher is not installed in .venv.
     echo Run:
     echo   python -m venv .venv
@@ -12,4 +12,4 @@ if not exist ".venv\Scripts\agent-desktop.exe" (
     exit /b 1
 )
 
-start "Personal Agent" ".venv\Scripts\agent-desktop.exe" --workspace "%WORKSPACE%"
+start "Personal Agent" ".venv\Scripts\pythonw.exe" -c "from personal_agent.desktop import main; main()" --workspace "%WORKSPACE%"
