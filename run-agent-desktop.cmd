@@ -1,6 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "WORKSPACE=%CD%"
 
 if not exist ".venv\Scripts\agent-desktop.exe" (
     echo Personal Agent desktop launcher is not installed in .venv.
@@ -11,5 +12,5 @@ if not exist ".venv\Scripts\agent-desktop.exe" (
     exit /b 1
 )
 
-".venv\Scripts\agent-desktop.exe" --workspace "%~dp0"
+".venv\Scripts\agent-desktop.exe" --workspace "%WORKSPACE%"
 if errorlevel 1 pause
