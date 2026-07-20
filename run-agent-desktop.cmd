@@ -12,4 +12,4 @@ if not exist ".venv\Scripts\pythonw.exe" (
     exit /b 1
 )
 
-start "Personal Agent" ".venv\Scripts\pythonw.exe" -c "from personal_agent.desktop import main; main()" --workspace "%WORKSPACE%"
+wscript.exe //nologo "%~dp0run-agent-desktop.vbs"
