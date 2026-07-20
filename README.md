@@ -27,6 +27,8 @@ agent-desktop
 
 런처는 프로젝트 루트를 작업 공간으로 지정하고, `.venv` 또는 데스크톱 패키지가 없으면 설치 명령을 안내합니다.
 
+Windows에서 시작 오류가 발생하면 상세 로그는 `%USERPROFILE%\.personal-agent\desktop-startup.log`에 저장됩니다.
+
 데스크톱 앱 중앙 화면은 xterm.js 터미널에서 실제 Codex CLI 세션을 표시합니다. macOS는 PTY, Windows는 ConPTY 기반으로 동작합니다. 작업 공간마다 별도 Codex CLI 세션과 터미널 화면을 유지합니다. 파일 변경 승인은 중앙 터미널에서 Codex CLI 방식으로 처리됩니다.
 
 LLM 없이도 기본 명령을 사용할 수 있습니다.

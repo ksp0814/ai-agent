@@ -12,7 +12,7 @@ If Not fso.FileExists(pythonw) Then
   WScript.Quit 1
 End If
 
-command = Chr(34) & pythonw & Chr(34) & _
-          " -c " & Chr(34) & "from personal_agent.desktop import main; main()" & Chr(34) & _
+command = Chr(34) & pythonw & Chr(34) & " " & _
+          Chr(34) & root & "\run-agent-desktop.pyw" & Chr(34) & _
           " --workspace " & Chr(34) & root & Chr(34)
 shell.Run command, 0, False
