@@ -12,5 +12,4 @@ if not exist ".venv\Scripts\agent-desktop.exe" (
     exit /b 1
 )
 
-".venv\Scripts\agent-desktop.exe" --workspace "%WORKSPACE%"
-if errorlevel 1 pause
+start "Personal Agent" ".venv\Scripts\agent-desktop.exe" --workspace "%WORKSPACE%"
