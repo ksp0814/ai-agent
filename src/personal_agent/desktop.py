@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 from typing import Optional
@@ -27,8 +28,12 @@ from .terminal import TerminalSession
 try:
     from PySide6.QtCore import QThread, QTimer, Qt, Signal, QObject, QUrl, Slot
     from PySide6.QtGui import QDesktopServices, QFont
-    from PySide6.QtWebChannel import QWebChannel
-    from PySide6.QtWebEngineWidgets import QWebEngineView
+    if sys.platform == "win32":
+        QWebChannel = None
+        QWebEngineView = None
+    else:
+        from PySide6.QtWebChannel import QWebChannel
+        from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtWidgets import (
         QApplication,
         QFileDialog,
@@ -156,6 +161,56 @@ class TerminalBridge(QObject):
     @Slot(result=str)
     def paste(self) -> str:
         return QApplication.clipboard().text()
+
+
+class NativeTerminalWidget(QPlainTextEdit):
+    """Windows terminal view that avoids QtWebEngine entirely."""
+
+    _ansi_pattern = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+        self.setReadOnly(True)
+        self.setUndoRedoEnabled(False)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setFont(QFont("Consolas", 11))
+        self.setAccessibleName("Codex 네이티브 터미널")
+
+    def append_output(self, text: str) -> None:
+        clean = self._ansi_pattern.sub("", text).replace("\r", "")
+        if clean:
+            self.moveCursor(self.textCursor().MoveOperation.End)
+            self.insertPlainText(clean)
+            self.ensureCursorVisible()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_C and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if self.textCursor().hasSelection():
+                QApplication.clipboard().setText(self.textCursor().selectedText())
+            return
+        if event.key() == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.window._write_terminal(QApplication.clipboard().text())
+            return
+        special = {
+            Qt.Key.Key_Return: "\r", Qt.Key.Key_Enter: "\r",
+            Qt.Key.Key_Backspace: "\x7f", Qt.Key.Key_Left: "\x1b[D",
+            Qt.Key.Key_Right: "\x1b[C", Qt.Key.Key_Up: "\x1b[A",
+            Qt.Key.Key_Down: "\x1b[B", Qt.Key.Key_Home: "\x1b[H",
+            Qt.Key.Key_End: "\x1b[F",
+        }
+        text = special.get(event.key(), event.text())
+        if text:
+            self.window._write_terminal(text)
+
+    def search_text(self, query: str) -> None:
+        if query:
+            self.find(query)
+
+    def adjust_font_size(self, delta: int) -> None:
+        font = self.font()
+        font.setPointSize(max(8, min(24, font.pointSize() + int(delta))))
+        self.setFont(font)
 
 
 class FileScanWorker(QThread):
@@ -382,15 +437,22 @@ class MainWindow(QMainWindow):
         self.approval_focus_button.clicked.connect(self._focus_terminal_for_approval)
         self.approval_focus_button.hide()
         center_layout.addWidget(self.approval_focus_button)
-        self.terminal = QWebEngineView()
-        self.terminal.setAccessibleName("Codex 터미널")
-        self.terminal.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
-        self.terminal.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.terminal_bridge = TerminalBridge(self)
-        self.terminal_channel = QWebChannel(self.terminal)
-        self.terminal_channel.registerObject("bridge", self.terminal_bridge)
-        self.terminal.page().setWebChannel(self.terminal_channel)
-        self.terminal.setHtml(TERMINAL_HTML, QUrl("https://cdn.jsdelivr.net/npm/xterm@5.3.0/"))
+        self.native_terminal = None
+        if sys.platform == "win32":
+            self.native_terminal = NativeTerminalWidget(self)
+            self.terminal = self.native_terminal
+            self.terminal_bridge.ready_for_output = True
+            self.terminal_bridge.output.connect(self.native_terminal.append_output)
+        else:
+            self.terminal = QWebEngineView()
+            self.terminal.setAccessibleName("Codex 터미널")
+            self.terminal.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
+            self.terminal.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self.terminal_channel = QWebChannel(self.terminal)
+            self.terminal_channel.registerObject("bridge", self.terminal_bridge)
+            self.terminal.page().setWebChannel(self.terminal_channel)
+            self.terminal.setHtml(TERMINAL_HTML, QUrl("https://cdn.jsdelivr.net/npm/xterm@5.3.0/"))
         center_layout.addWidget(self.terminal, 1)
         self._refresh_workspace_tabs()
         self._refresh_session_tabs()
@@ -587,13 +649,22 @@ class MainWindow(QMainWindow):
     def _search_terminal(self) -> None:
         query, accepted = QInputDialog.getText(self, "터미널 검색", "검색어")
         if accepted and query:
-            self.terminal.page().runJavaScript(f"window.searchActiveTerminal({json.dumps(query, ensure_ascii=False)});")
+            if self.native_terminal is not None:
+                self.native_terminal.search_text(query)
+            else:
+                self.terminal.page().runJavaScript(f"window.searchActiveTerminal({json.dumps(query, ensure_ascii=False)});")
 
     def _clear_terminal(self) -> None:
-        self.terminal.page().runJavaScript("window.clearActiveTerminal();")
+        if self.native_terminal is not None:
+            self.native_terminal.clear()
+        else:
+            self.terminal.page().runJavaScript("window.clearActiveTerminal();")
 
     def _adjust_terminal_font_size(self, delta: int) -> None:
-        self.terminal.page().runJavaScript(f"window.adjustTerminalFontSize({int(delta)});")
+        if self.native_terminal is not None:
+            self.native_terminal.adjust_font_size(delta)
+        else:
+            self.terminal.page().runJavaScript(f"window.adjustTerminalFontSize({int(delta)});")
 
     def _stop_active_terminal(self) -> None:
         session = self.terminal_sessions.get(self.terminal_active)
