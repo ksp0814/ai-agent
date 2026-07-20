@@ -1,12 +1,20 @@
 import json
+import platform
+import shutil
 import subprocess
 from typing import Any, Dict
 from uuid import uuid4
 
 
 def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex") -> Dict[str, Any]:
+    resolved = shutil.which(executable) or executable
+    command = [resolved, "app-server", "--listen", "stdio://"]
+    if platform.system() == "Windows" and resolved.lower().endswith((".cmd", ".bat")):
+        # npm installs Codex as a CMD shim; CreateProcess cannot launch it
+        # directly when shell=False.
+        command = ["cmd.exe", "/d", "/c", resolved, "app-server", "--listen", "stdio://"]
     process = subprocess.Popen(
-        [executable, "app-server", "--listen", "stdio://"],
+        command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

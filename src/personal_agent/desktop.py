@@ -312,7 +312,6 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(self._style())
         self._build_ui()
         self._refresh_files()
-        self._start_terminal()
         self.change_timer = QTimer(self)
         self.change_timer.setInterval(2000)
         self.change_timer.timeout.connect(self._check_file_changes)
@@ -337,7 +336,7 @@ class MainWindow(QMainWindow):
         self.workspace_label.setWordWrap(True); left_layout.addWidget(self.workspace_label)
         self.git_status_label = QLabel("Git 상태 확인 중…"); self.git_status_label.setObjectName("gitStatus"); self.git_status_label.setWordWrap(True); left_layout.addWidget(self.git_status_label)
         open_button = QPushButton("＋  작업 공간 추가"); open_button.setObjectName("primaryButton"); open_button.clicked.connect(self._choose_workspace); left_layout.addWidget(open_button)
-        self.workspace_list = QListWidget(); self.workspace_list.setObjectName("workspaceList"); self.workspace_list.itemClicked.connect(self._select_workspace); left_layout.addWidget(self.workspace_list, 1)
+        self.workspace_list = QListWidget(); self.workspace_list.setObjectName("workspaceList"); self.workspace_list.setAccessibleName("작업 공간 목록"); self.workspace_list.itemClicked.connect(self._select_workspace); self.workspace_list.itemActivated.connect(self._select_workspace); left_layout.addWidget(self.workspace_list, 1)
         remove_workspace = QPushButton("선택 작업 공간 제거"); remove_workspace.setObjectName("secondaryButton"); remove_workspace.clicked.connect(self._remove_workspace); left_layout.addWidget(remove_workspace)
         self._refresh_workspaces()
         left_layout.addWidget(self._title("사용량"))
@@ -356,12 +355,12 @@ class MainWindow(QMainWindow):
         center_header_layout.addWidget(self._title("터미널"))
         self.workspace_tabs = QTabBar(); self.workspace_tabs.setObjectName("workspaceTabs"); self.workspace_tabs.setExpanding(False); self.workspace_tabs.setMovable(False); self.workspace_tabs.currentChanged.connect(self._select_workspace_tab); center_header_layout.addWidget(self.workspace_tabs)
         center_header_layout.addStretch(1)
-        self.restart_button = QPushButton("↻"); self.restart_button.setObjectName("iconButton"); self.restart_button.setFixedSize(34, 34); self.restart_button.setToolTip("현재 작업 공간의 Codex 세션을 다시 시작합니다."); self.restart_button.clicked.connect(self._restart_terminal); center_header_layout.addWidget(self.restart_button)
-        self.stop_button = QPushButton("■"); self.stop_button.setObjectName("dangerIconButton"); self.stop_button.setFixedSize(34, 34); self.stop_button.setToolTip("현재 작업 공간의 Codex 세션을 중지합니다."); self.stop_button.clicked.connect(self._stop_active_terminal); center_header_layout.addWidget(self.stop_button)
-        self.search_terminal_button = QPushButton("⌕"); self.search_terminal_button.setObjectName("iconButton"); self.search_terminal_button.setFixedSize(34, 34); self.search_terminal_button.setToolTip("터미널 출력에서 검색합니다."); self.search_terminal_button.clicked.connect(self._search_terminal); center_header_layout.addWidget(self.search_terminal_button)
+        self.restart_button = QPushButton("↻"); self.restart_button.setObjectName("iconButton"); self.restart_button.setAccessibleName("Codex 세션 재시작"); self.restart_button.setFixedSize(38, 38); self.restart_button.setToolTip("현재 작업 공간의 Codex 세션을 다시 시작합니다."); self.restart_button.clicked.connect(self._restart_terminal); center_header_layout.addWidget(self.restart_button)
+        self.stop_button = QPushButton("■"); self.stop_button.setObjectName("dangerIconButton"); self.stop_button.setAccessibleName("Codex 세션 중지"); self.stop_button.setFixedSize(38, 38); self.stop_button.setToolTip("현재 작업 공간의 Codex 세션을 중지합니다."); self.stop_button.clicked.connect(self._stop_active_terminal); center_header_layout.addWidget(self.stop_button)
+        self.search_terminal_button = QPushButton("⌕"); self.search_terminal_button.setObjectName("iconButton"); self.search_terminal_button.setAccessibleName("터미널 검색"); self.search_terminal_button.setFixedSize(38, 38); self.search_terminal_button.setToolTip("터미널 출력에서 검색합니다."); self.search_terminal_button.clicked.connect(self._search_terminal); center_header_layout.addWidget(self.search_terminal_button)
         self.clear_terminal_button = QPushButton("지우기"); self.clear_terminal_button.setObjectName("compactButton"); self.clear_terminal_button.setFixedSize(68, 34); self.clear_terminal_button.setToolTip("현재 터미널 화면을 지웁니다."); self.clear_terminal_button.clicked.connect(self._clear_terminal); center_header_layout.addWidget(self.clear_terminal_button)
-        self.decrease_font_button = QPushButton("A−"); self.decrease_font_button.setObjectName("iconButton"); self.decrease_font_button.setFixedSize(34, 34); self.decrease_font_button.setToolTip("터미널 글자를 작게 합니다."); self.decrease_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(-1)); center_header_layout.addWidget(self.decrease_font_button)
-        self.increase_font_button = QPushButton("A+"); self.increase_font_button.setObjectName("iconButton"); self.increase_font_button.setFixedSize(34, 34); self.increase_font_button.setToolTip("터미널 글자를 크게 합니다."); self.increase_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(1)); center_header_layout.addWidget(self.increase_font_button)
+        self.decrease_font_button = QPushButton("A−"); self.decrease_font_button.setObjectName("iconButton"); self.decrease_font_button.setAccessibleName("터미널 글자 작게"); self.decrease_font_button.setFixedSize(38, 38); self.decrease_font_button.setToolTip("터미널 글자를 작게 합니다."); self.decrease_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(-1)); center_header_layout.addWidget(self.decrease_font_button)
+        self.increase_font_button = QPushButton("A+"); self.increase_font_button.setObjectName("iconButton"); self.increase_font_button.setAccessibleName("터미널 글자 크게"); self.increase_font_button.setFixedSize(38, 38); self.increase_font_button.setToolTip("터미널 글자를 크게 합니다."); self.increase_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(1)); center_header_layout.addWidget(self.increase_font_button)
         center_layout.addWidget(center_header)
         session_header = QWidget(); session_header_layout = QHBoxLayout(session_header); session_header_layout.setContentsMargins(0, 0, 0, 0); session_header_layout.setSpacing(6)
         session_header_layout.addWidget(self._title("세션"))
@@ -384,6 +383,7 @@ class MainWindow(QMainWindow):
         self.approval_focus_button.hide()
         center_layout.addWidget(self.approval_focus_button)
         self.terminal = QWebEngineView()
+        self.terminal.setAccessibleName("Codex 터미널")
         self.terminal.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
         self.terminal.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.terminal_bridge = TerminalBridge(self)
@@ -398,8 +398,8 @@ class MainWindow(QMainWindow):
         right = QWidget(); right.setObjectName("filePanel"); right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(16, 18, 16, 16); right_layout.setSpacing(10)
         right_layout.addWidget(self._title("탐색기"))
-        self.file_search = QLineEdit(); self.file_search.setObjectName("searchBox"); self.file_search.setPlaceholderText("파일 찾기…"); self.file_search.textChanged.connect(self._filter_files); right_layout.addWidget(self.file_search)
-        self.files = QTreeWidget(); self.files.setObjectName("fileTree"); self.files.setHeaderHidden(True); self.files.setUniformRowHeights(True); self.files.itemClicked.connect(self._preview_file); self.files.itemExpanded.connect(self._expand_folder); right_layout.addWidget(self.files, 1)
+        self.file_search = QLineEdit(); self.file_search.setObjectName("searchBox"); self.file_search.setAccessibleName("파일 검색"); self.file_search.setClearButtonEnabled(True); self.file_search.setPlaceholderText("파일 이름 검색…"); self.file_search.textChanged.connect(self._filter_files); right_layout.addWidget(self.file_search)
+        self.files = QTreeWidget(); self.files.setObjectName("fileTree"); self.files.setAccessibleName("작업 공간 파일 목록"); self.files.setHeaderHidden(True); self.files.setUniformRowHeights(True); self.files.itemClicked.connect(self._preview_file); self.files.itemActivated.connect(self._preview_file); self.files.itemExpanded.connect(self._expand_folder); right_layout.addWidget(self.files, 1)
         refresh = QPushButton("파일 새로고침"); refresh.setObjectName("secondaryButton"); refresh.clicked.connect(self._refresh_files); right_layout.addWidget(refresh)
         right_layout.addWidget(self._title("변경 사항"))
         self.changed_list = QListWidget(); self.changed_list.setObjectName("changedList"); self.changed_list.setMinimumHeight(72); self.changed_list.setMaximumHeight(150); self.changed_list.itemClicked.connect(self._preview_changed_item); right_layout.addWidget(self.changed_list)
@@ -481,7 +481,7 @@ class MainWindow(QMainWindow):
         if not session_id:
             return
         self.active_session_ids[str(self.workspace)] = session_id
-        self._start_terminal()
+        self._schedule_terminal_start()
         record = self._active_session()
         self.statusBar().showMessage(f"세션 선택됨: {record.name if record else session_id}")
 
@@ -503,7 +503,7 @@ class MainWindow(QMainWindow):
         self.active_session_ids[str(self.workspace)] = record.session_id
         self._refresh_session_tabs()
         self._save_workspaces()
-        self._start_terminal()
+        self._schedule_terminal_start()
         self.statusBar().showMessage(f"새 세션을 시작했습니다: {record.name}")
 
     def _rename_session(self) -> None:
@@ -543,7 +543,7 @@ class MainWindow(QMainWindow):
         self.active_session_ids[str(self.workspace)] = records[0].session_id
         self._refresh_session_tabs()
         self._save_workspaces()
-        self._start_terminal()
+        self._schedule_terminal_start()
         self.statusBar().showMessage(f"세션을 닫았습니다: {record.name}")
 
     def _start_terminal(self) -> None:
@@ -575,11 +575,14 @@ class MainWindow(QMainWindow):
             self.activity.setText("● 시작 실패")
             self.statusBar().showMessage(f"Codex CLI 세션 시작 실패: {exc}")
 
+    def _schedule_terminal_start(self) -> None:
+        QTimer.singleShot(0, self._start_terminal)
+
     def _restart_terminal(self) -> None:
         session = self.terminal_sessions.get(self._ensure_session_for_workspace())
         if session is not None:
             session.stop()
-        self._start_terminal()
+        self._schedule_terminal_start()
 
     def _search_terminal(self) -> None:
         query, accepted = QInputDialog.getText(self, "터미널 검색", "검색어")
@@ -648,6 +651,16 @@ class MainWindow(QMainWindow):
         if session is not None:
             session.resize(columns, rows)
 
+    @staticmethod
+    def _worker_is_running(worker) -> bool:
+        if worker is None:
+            return False
+        try:
+            return worker.isRunning()
+        except RuntimeError:
+            # Qt may delete the C++ worker before Python clears its reference.
+            return False
+
     def closeEvent(self, event) -> None:
         if self.change_timer is not None:
             self.change_timer.stop()
@@ -655,8 +668,22 @@ class MainWindow(QMainWindow):
             self.terminal_timer.stop()
         for session in self.terminal_sessions.values():
             session.stop()
-        for worker in (self.scan_worker, self.change_scan_worker, self.git_status_worker, self.git_diff_worker, self.diagnostics_worker, self.usage_worker, self.reset_credit_worker):
-            if worker is not None and worker.isRunning():
+        workers = [
+            self.scan_worker,
+            self.change_scan_worker,
+            self.git_status_worker,
+            self.git_diff_worker,
+            self.diagnostics_worker,
+            self.usage_worker,
+            self.reset_credit_worker,
+            *self.scan_workers,
+        ]
+        seen = set()
+        for worker in workers:
+            if worker is None or id(worker) in seen:
+                continue
+            seen.add(id(worker))
+            if self._worker_is_running(worker):
                 worker.requestInterruption()
                 worker.quit()
                 worker.wait(1500)
@@ -688,7 +715,7 @@ class MainWindow(QMainWindow):
         self.usage_worker.start()
 
     def _load_diagnostics(self) -> None:
-        if self.diagnostics_worker is not None and self.diagnostics_worker.isRunning():
+        if self._worker_is_running(self.diagnostics_worker):
             return
         self.diagnostic_label.setText("진단 확인 중…")
         self.diagnostics_worker = DiagnosticsWorker(self.workspace)
@@ -830,7 +857,7 @@ class MainWindow(QMainWindow):
         return FileBaseline(stat.st_mtime_ns, stat.st_size, content, is_binary), captured
 
     def _check_file_changes(self) -> None:
-        if self.change_scan_worker is not None and self.change_scan_worker.isRunning():
+        if self._worker_is_running(self.change_scan_worker):
             return
         self.change_scan_worker = FileChangeWorker(self.workspace)
         self.change_scan_worker.scanned.connect(self._file_changes_scanned)
@@ -839,7 +866,7 @@ class MainWindow(QMainWindow):
         self.change_scan_worker.start()
 
     def _check_git_status(self) -> None:
-        if self.git_status_worker is not None and self.git_status_worker.isRunning():
+        if self._worker_is_running(self.git_status_worker):
             return
         self.git_status_worker = GitStatusWorker(self.workspace)
         self.git_status_worker.loaded.connect(self._git_status_loaded)
@@ -877,7 +904,7 @@ class MainWindow(QMainWindow):
         relative = self.preview_relative
         if not relative or relative not in self.git_entries:
             return
-        if self.git_diff_worker is not None and self.git_diff_worker.isRunning():
+        if self._worker_is_running(self.git_diff_worker):
             return
         self.git_diff_button.setEnabled(False)
         self.git_diff_worker = GitDiffWorker(self.workspace, relative)
@@ -1220,7 +1247,7 @@ class MainWindow(QMainWindow):
         self._refresh_workspaces()
         self._refresh_session_tabs()
         self._refresh_files()
-        self._start_terminal()
+        self._schedule_terminal_start()
         self._save_workspaces()
         self.statusBar().showMessage(f"작업 공간 선택됨: {self.workspace.name or self.workspace}")
 
@@ -1404,49 +1431,50 @@ class MainWindow(QMainWindow):
     def _style() -> str:
         return """
         * { outline: none; }
-        QWidget { background:#0f1720; color:#dce7e5; font-size:13px; }
-        QWidget#sidebar, QWidget#filePanel { background:#141f2a; }
-        QWidget#centerPanel { background:#0c151e; }
-        QSplitter::handle { background:#263944; width:2px; }
-        QLabel#brand { color:#f2fbf8; font-size:18px; font-weight:800; letter-spacing:1.6px; padding:2px 0; }
-        QLabel#brandSubtitle { color:#78938e; font-size:10px; font-weight:700; letter-spacing:1.2px; padding-bottom:8px; }
-        QLabel#section { color:#8aa8a1; font-size:11px; font-weight:800; letter-spacing:1.1px; padding-top:7px; padding-bottom:2px; }
-        QLabel#workspacePath { color:#c2d2ce; background:#0e1821; border:1px solid #2c424d; border-radius:7px; font-size:12px; padding:9px 10px; }
-        QLabel#gitStatus { color:#b5c9c4; background:#0e1821; border:1px solid #2c424d; border-radius:7px; padding:9px 10px; }
-        QLabel#diagnosticCard { color:#b8cbc6; background:#0e1821; border:1px solid #2c424d; border-radius:7px; padding:9px 10px; }
-        QLabel#activity { color:#d7fff0; background:#174536; border:1px solid #3d9b79; border-radius:7px; padding:8px 11px; font-weight:750; }
-        QLabel#approvalNotice { color:#a7bab6; background:#0e1821; border:1px solid #2c424d; border-radius:7px; padding:7px 10px; }
-        QLabel#approvalNotice[pending="true"] { color:#ffe4a8; background:#3b301e; border-color:#8b6e36; }
-        QLabel#sessionNotice { color:#f5d99b; background:#342c1d; border:1px solid #765f35; border-radius:7px; padding:7px 10px; }
-        QLabel#infoCard { color:#c9d9d5; background:#0e1821; border:1px solid #2c424d; border-radius:7px; padding:10px; line-height:1.35em; }
-        QLabel#previewTitle { color:#c5d6d1; font-size:12px; font-weight:650; padding:2px; }
-        QLabel#hint { color:#78918d; font-size:11px; padding-top:2px; }
-        QLabel { color:#cedbd8; }
-        QLineEdit, QListWidget, QTreeWidget, QPlainTextEdit, QWebEngineView { background:#0b141c; border:1px solid #304854; border-radius:8px; }
-        QWebEngineView { border-color:#355361; }
-        QLineEdit { padding:9px 11px; color:#e5f1ee; selection-background-color:#285148; }
-        QLineEdit:focus { border:1px solid #72d3aa; }
-        QListWidget, QTreeWidget, QPlainTextEdit { padding:6px; }
-        QListWidget::item, QTreeWidget::item { padding:7px 8px; border-radius:5px; }
-        QListWidget::item:hover, QTreeWidget::item:hover { background:#203642; }
-        QListWidget::item:selected, QTreeWidget::item:selected { background:#285344; color:#f4fffb; border-left:2px solid #76d5ae; }
-        QPushButton { min-height:34px; background:#20323d; border:1px solid #3a5661; border-radius:7px; padding:0 12px; color:#e0ece9; font-weight:650; }
-        QPushButton:hover { background:#2b4650; border-color:#6a9693; }
-        QPushButton:pressed { background:#182a32; }
-        QPushButton:disabled { background:#18242b; border-color:#293b43; color:#667b7c; }
-        QPushButton#primaryButton { background:#2d8067; border-color:#58c39b; color:#f1fff9; }
-        QPushButton#primaryButton:hover { background:#399b7b; border-color:#8ae7c1; }
-        QPushButton#compactButton { min-height:32px; background:#1d2d37; border:1px solid #39525d; border-radius:7px; padding:0 10px; color:#c7d8d4; font-size:12px; font-weight:650; }
-        QPushButton#compactButton:hover { background:#2b4650; border-color:#6f9b98; color:#f1fffb; }
-        QPushButton#compactButton:disabled { background:#18242b; border-color:#293b43; color:#667b7c; }
-        QPushButton#secondaryButton { background:#1d2d37; border-color:#39525d; color:#c7d8d4; }
-        QPushButton#secondaryButton:hover { background:#2b4650; border-color:#6f9b98; color:#f1fffb; }
-        QPushButton#dangerButton { background:#4a3038; border-color:#895866; color:#ffd8dd; }
-        QPushButton#dangerButton:hover { background:#633b47; border-color:#bd7b89; color:#ffffff; }
-        QPushButton#iconButton { min-height:34px; background:#1d2d37; border:1px solid #39525d; border-radius:7px; padding:0; color:#c7d8d4; font-size:15px; font-weight:700; }
-        QPushButton#iconButton:hover { background:#2b4650; border-color:#6f9b98; color:#ffffff; }
-        QPushButton#dangerIconButton { min-height:34px; background:#4a3038; border:1px solid #895866; border-radius:7px; padding:0; color:#ffd8dd; font-size:11px; }
-        QPushButton#dangerIconButton:hover { background:#633b47; border-color:#bd7b89; color:#ffffff; }
+        QMainWindow, QWidget { background:#0b1220; color:#e5edf5; font-size:13px; }
+        QWidget#sidebar, QWidget#filePanel { background:#111b2b; }
+        QWidget#centerPanel { background:#0d1726; }
+        QSplitter::handle { background:#26364b; width:6px; }
+        QSplitter::handle:hover { background:#4c7ca0; }
+        QLabel#brand { color:#f5f9ff; font-size:19px; font-weight:800; letter-spacing:1.6px; padding:2px 0; }
+        QLabel#brandSubtitle { color:#8fa5ba; font-size:10px; font-weight:700; letter-spacing:1.2px; padding-bottom:8px; }
+        QLabel#section { color:#9bb4c9; font-size:11px; font-weight:800; letter-spacing:1.1px; padding-top:7px; padding-bottom:2px; }
+        QLabel#workspacePath, QLabel#gitStatus, QLabel#diagnosticCard { color:#c8d6e4; background:#162337; border:1px solid #2b4159; border-radius:9px; padding:10px; }
+        QLabel#workspacePath { font-size:12px; }
+        QLabel#activity { color:#dfffee; background:#15523f; border:1px solid #48b58d; border-radius:9px; padding:9px 12px; font-weight:750; }
+        QLabel#approvalNotice { color:#b9c9d8; background:#162337; border:1px solid #2b4159; border-radius:9px; padding:8px 11px; }
+        QLabel#approvalNotice[pending="true"] { color:#ffe9b0; background:#48381d; border-color:#b08a3d; }
+        QLabel#sessionNotice { color:#ffe1a0; background:#3c311d; border:1px solid #806532; border-radius:9px; padding:8px 11px; }
+        QLabel#infoCard { color:#cfdeeb; background:#162337; border:1px solid #2b4159; border-radius:9px; padding:11px; }
+        QLabel#previewTitle { color:#d2e0ec; font-size:12px; font-weight:650; padding:2px; }
+        QLabel#hint { color:#8fa5ba; font-size:11px; padding-top:2px; }
+        QLabel { color:#d5e1ec; }
+        QLineEdit, QListWidget, QTreeWidget, QPlainTextEdit, QWebEngineView { background:#0a1321; border:1px solid #304963; border-radius:9px; }
+        QWebEngineView { border-color:#3a5b77; }
+        QLineEdit { padding:10px 12px; color:#edf5fb; selection-background-color:#245a67; }
+        QLineEdit:focus, QPlainTextEdit:focus, QListWidget:focus, QTreeWidget:focus, QWebEngineView:focus { border:2px solid #62c8b0; }
+        QListWidget, QTreeWidget, QPlainTextEdit { padding:7px; }
+        QListWidget::item, QTreeWidget::item { padding:8px 9px; border-radius:6px; }
+        QListWidget::item:hover, QTreeWidget::item:hover { background:#1b3449; }
+        QListWidget::item:selected, QTreeWidget::item:selected { background:#1d5960; color:#f4fffb; border-left:3px solid #76d5ae; }
+        QPushButton { min-height:38px; background:#1b3044; border:1px solid #41617a; border-radius:8px; padding:0 13px; color:#e6f0f7; font-weight:650; }
+        QPushButton:hover { background:#294a61; border-color:#78b6c5; }
+        QPushButton:focus { border:2px solid #62c8b0; }
+        QPushButton:pressed { background:#142638; }
+        QPushButton:disabled { background:#162333; border-color:#2c3e52; color:#71859a; }
+        QPushButton#primaryButton { background:#287b68; border-color:#62cda8; color:#f1fff9; }
+        QPushButton#primaryButton:hover { background:#359b82; border-color:#9be8c8; }
+        QPushButton#compactButton { min-height:36px; background:#1a2e41; border:1px solid #3e5d76; border-radius:8px; padding:0 11px; color:#d2e1eb; font-size:12px; font-weight:650; }
+        QPushButton#compactButton:hover { background:#294a61; border-color:#82bdc9; color:#f1fffb; }
+        QPushButton#compactButton:disabled { background:#162333; border-color:#2c3e52; color:#71859a; }
+        QPushButton#secondaryButton { background:#1a2e41; border-color:#3e5d76; color:#d2e1eb; }
+        QPushButton#secondaryButton:hover { background:#294a61; border-color:#82bdc9; color:#f1fffb; }
+        QPushButton#dangerButton { background:#51313e; border-color:#a7677b; color:#ffe0e6; }
+        QPushButton#dangerButton:hover { background:#704252; border-color:#dc92a4; color:#ffffff; }
+        QPushButton#iconButton { min-height:38px; background:#1a2e41; border:1px solid #3e5d76; border-radius:8px; padding:0; color:#d2e1eb; font-size:15px; font-weight:700; }
+        QPushButton#iconButton:hover { background:#294a61; border-color:#82bdc9; color:#ffffff; }
+        QPushButton#dangerIconButton { min-height:38px; background:#51313e; border:1px solid #a7677b; border-radius:8px; padding:0; color:#ffe0e6; font-size:11px; }
+        QPushButton#dangerIconButton:hover { background:#704252; border-color:#dc92a4; color:#ffffff; }
         QProgressBar#usageBar { background:#0e171e; border:1px solid #2a3b45; border-radius:5px; color:#dcece8; text-align:center; min-height:18px; max-height:18px; }
         QProgressBar#usageBar::chunk { background:#3b9e79; border-radius:4px; }
         QTabBar#workspaceTabs { background:transparent; }
@@ -1469,7 +1497,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Personal Agent desktop app")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     args = parser.parse_args()
-    app = QApplication([]); app.setApplicationName("개인 에이전트")
+    app = QApplication([]); app.setApplicationName("개인 에이전트"); app.setStyle("Fusion")
     font_family = "Segoe UI" if sys.platform == "win32" else "Helvetica Neue" if sys.platform == "darwin" else "Noto Sans"
     app.setFont(QFont(font_family, 12))
-    window = MainWindow(args.workspace); window.show(); raise SystemExit(app.exec())
+    window = MainWindow(args.workspace)
+    window.show()
+    # Windows ConPTY startup can briefly block while Codex CLI initializes.
+    # Let Qt paint the window before starting the external terminal process.
+    QTimer.singleShot(0, window._start_terminal)
+    raise SystemExit(app.exec())

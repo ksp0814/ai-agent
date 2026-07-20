@@ -9,6 +9,12 @@ from .tools import WorkspaceTools
 
 
 def _run(command: list[str], cwd: Path) -> tuple[bool, str]:
+    executable = shutil.which(command[0])
+    if platform.system() == "Windows" and executable and executable.lower().endswith((".cmd", ".bat")):
+        # npm installs Codex as a CMD shim. CreateProcess cannot launch that
+        # shim directly when shell=False, so route only trusted local shims
+        # through cmd.exe.
+        command = ["cmd.exe", "/d", "/c", executable, *command[1:]]
     try:
         result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired) as exc:

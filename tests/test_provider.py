@@ -18,7 +18,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(command[:3], ["codex", "exec", "--ephemeral"])
         self.assertIn("--sandbox", command)
         self.assertIn("--skip-git-repo-check", command)
-        self.assertIn("/workspace", command)
+        self.assertIn(str(Path("/workspace")), command)
 
     @patch("personal_agent.agent.subprocess.run")
     def test_codex_cli_provider_passes_model_and_reasoning(self, run):

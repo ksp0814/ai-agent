@@ -6,6 +6,13 @@ from personal_agent.desktop import MainWindow
 
 
 class ChangeTrackingTests(unittest.TestCase):
+    def test_deleted_qt_worker_is_treated_as_not_running(self):
+        class DeletedWorker:
+            def isRunning(self):
+                raise RuntimeError("Internal C++ object already deleted")
+
+        self.assertFalse(MainWindow._worker_is_running(DeletedWorker()))
+
     def test_binary_baseline_is_not_captured_for_rollback(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "data.bin"
