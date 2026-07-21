@@ -28,7 +28,7 @@ from .terminal import TerminalSession
 
 try:
     from PySide6.QtCore import QThread, QTimer, Qt, Signal, QObject, QUrl, Slot, QPoint, QEvent, QSize
-    from PySide6.QtGui import QDesktopServices, QFont
+    from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
     from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtWidgets import (
@@ -180,9 +180,10 @@ class TerminalBridge(QObject):
     output = Signal(str, str)
     activeChanged = Signal(str)
 
-    def __init__(self, window):
+    def __init__(self, window, pane_id: str = "main"):
         super().__init__(window)
         self.window = window
+        self.pane_id = pane_id
         self.ready_for_output = False
         self.pending_output = []
 
@@ -196,12 +197,12 @@ class TerminalBridge(QObject):
         if self.ready_for_output:
             self.activeChanged.emit(session_id)
         else:
-            self.window.terminal_active = session_id
+            self.window.terminal_pane_sessions[self.pane_id] = session_id
 
     @Slot()
     def ready(self) -> None:
         self.ready_for_output = True
-        self.activeChanged.emit(self.window.terminal_active)
+        self.activeChanged.emit(self.window.terminal_pane_sessions.get(self.pane_id) or self.window.terminal_active)
         for session_id, text in self.pending_output:
             self.output.emit(session_id, text)
         self.pending_output = []
@@ -212,7 +213,7 @@ class TerminalBridge(QObject):
 
     @Slot(int, int)
     def resize(self, columns: int, rows: int) -> None:
-        self.window._resize_terminal(columns, rows)
+        self.window._resize_terminal_for_pane(self.pane_id, columns, rows)
 
     @Slot(str)
     def copy(self, text: str) -> None:
@@ -347,6 +348,7 @@ class MainWindow(QMainWindow):
         self.workspace_state = WorkspaceStateStore(self.workspace_store)
         self.workspaces, self.workspace = self.workspace_state.load(self.workspace)
         saved_sessions, saved_active_sessions, saved_terminal_history = self.workspace_state.load_sessions()
+        self.terminal_layout_by_workspace = self.workspace_state.load_terminal_layout()
         self.sessions_by_workspace = self._restore_sessions(saved_sessions)
         self.active_session_ids = {
             str(Path(path).expanduser().resolve()): session_id
@@ -374,6 +376,7 @@ class MainWindow(QMainWindow):
         self.reset_credit_id = ""
         self.terminal_sessions = {}
         self.terminal_active = ""
+        self.terminal_pane_sessions = {"main": "", "split": ""}
         self.terminal_timer = None
         self.preview_path = None
         self.file_baselines = {}
@@ -393,6 +396,11 @@ class MainWindow(QMainWindow):
         self.resize(1360, 820)
         self.setStyleSheet(self._style())
         self._build_ui()
+        self.quick_open_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.quick_open_shortcut.activated.connect(self._quick_open)
+        if sys.platform == "darwin":
+            self.quick_open_macos_shortcut = QShortcut(QKeySequence("Meta+P"), self)
+            self.quick_open_macos_shortcut.activated.connect(self._quick_open)
         self._refresh_files()
         self.change_timer = QTimer(self)
         self.change_timer.setInterval(30_000)
@@ -408,6 +416,7 @@ class MainWindow(QMainWindow):
         self._check_git_status()
         self._load_usage()
         self.usage_timer.start()
+        self._restore_terminal_layout()
 
     def _build_ui(self) -> None:
         root = QSplitter()
@@ -420,6 +429,7 @@ class MainWindow(QMainWindow):
         brand_subtitle = QLabel("LOCAL CODING WORKBENCH"); brand_subtitle.setObjectName("brandSubtitle"); left_layout.addWidget(brand_subtitle)
         left_layout.addWidget(self._title("프로젝트"))
         open_button = QPushButton("＋  작업 공간 추가"); open_button.setObjectName("primaryButton"); open_button.clicked.connect(self._choose_workspace); left_layout.addWidget(open_button)
+        worktree_button = QPushButton("＋  새 Git worktree"); worktree_button.setObjectName("secondaryButton"); worktree_button.setToolTip("현재 Git 저장소에서 독립 작업 공간을 만듭니다."); worktree_button.clicked.connect(self._create_worktree); left_layout.addWidget(worktree_button)
         self.workspace_list = QListWidget(); self.workspace_list.setObjectName("workspaceList"); self.workspace_list.setAccessibleName("작업 공간 목록"); self.workspace_list.currentItemChanged.connect(self._workspace_selection_changed); self.workspace_list.itemClicked.connect(self._select_workspace_item); self.workspace_list.itemActivated.connect(self._select_workspace_item); left_layout.addWidget(self.workspace_list, 1)
         remove_workspace = QPushButton("선택 작업 공간 제거"); remove_workspace.setObjectName("secondaryButton"); remove_workspace.clicked.connect(self._remove_workspace); left_layout.addWidget(remove_workspace)
         self._refresh_workspaces()
@@ -430,9 +440,10 @@ class MainWindow(QMainWindow):
 
         center = QWidget(); center.setObjectName("centerPanel"); center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(10, 10, 10, 10); center_layout.setSpacing(8)
-        center_header = QWidget(); center_header_layout = QHBoxLayout(center_header); center_header_layout.setContentsMargins(0, 0, 0, 0)
+        center_header = QWidget(); center_header.setObjectName("terminalToolbar"); center_header_layout = QHBoxLayout(center_header); center_header_layout.setContentsMargins(4, 2, 4, 2); center_header_layout.setSpacing(6)
         center_header_layout.addWidget(self._title("터미널"))
         self.workspace_tabs = QTabBar(); self.workspace_tabs.setObjectName("workspaceTabs"); self.workspace_tabs.setAccessibleName("작업 공간 탭"); self.workspace_tabs.setExpanding(False); self.workspace_tabs.setMovable(False); self.workspace_tabs.currentChanged.connect(self._select_workspace_tab)
+        center_header_layout.addWidget(self.workspace_tabs)
         center_header_layout.addStretch(1)
         self.restart_button = QPushButton("↻"); self.restart_button.setObjectName("iconButton"); self.restart_button.setAccessibleName("Codex 세션 재시작"); self.restart_button.setFixedSize(38, 38); self.restart_button.setToolTip("현재 작업 공간의 Codex 세션을 다시 시작합니다."); self.restart_button.clicked.connect(self._restart_terminal); center_header_layout.addWidget(self.restart_button)
         self.stop_button = QPushButton("■"); self.stop_button.setObjectName("dangerIconButton"); self.stop_button.setAccessibleName("Codex 세션 중지"); self.stop_button.setFixedSize(38, 38); self.stop_button.setToolTip("현재 작업 공간의 Codex 세션을 중지합니다."); self.stop_button.clicked.connect(self._stop_active_terminal); center_header_layout.addWidget(self.stop_button)
@@ -440,7 +451,6 @@ class MainWindow(QMainWindow):
         self.clear_terminal_button = QPushButton("지우기"); self.clear_terminal_button.setObjectName("compactButton"); self.clear_terminal_button.setFixedSize(68, 34); self.clear_terminal_button.setToolTip("현재 터미널 화면을 지웁니다."); self.clear_terminal_button.clicked.connect(self._clear_terminal); center_header_layout.addWidget(self.clear_terminal_button)
         self.decrease_font_button = QPushButton("A−"); self.decrease_font_button.setObjectName("iconButton"); self.decrease_font_button.setAccessibleName("터미널 글자 작게"); self.decrease_font_button.setFixedSize(38, 38); self.decrease_font_button.setToolTip("터미널 글자를 작게 합니다."); self.decrease_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(-1)); center_header_layout.addWidget(self.decrease_font_button)
         self.increase_font_button = QPushButton("A+"); self.increase_font_button.setObjectName("iconButton"); self.increase_font_button.setAccessibleName("터미널 글자 크게"); self.increase_font_button.setFixedSize(38, 38); self.increase_font_button.setToolTip("터미널 글자를 크게 합니다."); self.increase_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(1)); center_header_layout.addWidget(self.increase_font_button)
-        center_header.hide()
         center_layout.addWidget(center_header)
         session_header = QWidget(); session_header.setObjectName("tabHeader"); session_header.setMinimumHeight(44); session_header_layout = QHBoxLayout(session_header); session_header_layout.setContentsMargins(0, 0, 0, 0); session_header_layout.setSpacing(0)
         self.top_tabs = AdaptiveTabBar(); self.top_tabs.setObjectName("topTabs"); self.top_tabs.setAccessibleName("열린 세션 및 파일 탭"); self.top_tabs.setMinimumHeight(44); self.top_tabs.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred); self.top_tabs.setDocumentMode(True); self.top_tabs.setDrawBase(False); self.top_tabs.setExpanding(False); self.top_tabs.setMovable(False); self.top_tabs.setTabsClosable(True); self.top_tabs.setUsesScrollButtons(True); self.top_tabs.setElideMode(Qt.TextElideMode.ElideRight); self.top_tabs.currentChanged.connect(self._select_top_tab); self.top_tabs.tabBarClicked.connect(self._top_tab_clicked); self.top_tabs.tabCloseRequested.connect(self._close_top_tab); session_header_layout.addWidget(self.top_tabs)
@@ -449,6 +459,7 @@ class MainWindow(QMainWindow):
         session_header_layout.addStretch(1)
         self.file_view_back_button = QPushButton("← 터미널"); self.file_view_back_button.setObjectName("compactButton"); self.file_view_back_button.clicked.connect(self._show_terminal_view); self.file_view_back_button.hide()
         self.new_session_button = QPushButton("＋"); self.new_session_button.setObjectName("iconButton"); self.new_session_button.setAccessibleName("새 Codex 세션"); self.new_session_button.setFixedSize(40, 40); self.new_session_button.setToolTip("현재 작업 공간에 새 Codex 세션을 만듭니다."); self.new_session_button.clicked.connect(self._new_session); session_header_layout.addWidget(self.new_session_button)
+        self.split_terminal_button = QPushButton("⧉"); self.split_terminal_button.setObjectName("iconButton"); self.split_terminal_button.setAccessibleName("터미널 분할"); self.split_terminal_button.setFixedSize(40, 40); self.split_terminal_button.setToolTip("현재 작업 공간에 독립 Codex 터미널을 하나 더 엽니다."); self.split_terminal_button.clicked.connect(self._toggle_terminal_split); session_header_layout.addWidget(self.split_terminal_button)
         self.rename_session_button = QPushButton("이름"); self.rename_session_button.setObjectName("compactButton"); self.rename_session_button.setFixedSize(60, 40); self.rename_session_button.clicked.connect(self._rename_session); session_header_layout.addWidget(self.rename_session_button)
         self.close_session_button = QPushButton("×"); self.close_session_button.setObjectName("dangerIconButton"); self.close_session_button.setFixedSize(40, 40); self.close_session_button.setToolTip("현재 세션을 닫습니다."); self.close_session_button.clicked.connect(self._close_session); session_header_layout.addWidget(self.close_session_button)
         self.rename_session_button.hide()
@@ -457,17 +468,18 @@ class MainWindow(QMainWindow):
         self.session_notice = QLabel(); self.session_notice.setObjectName("sessionNotice"); self.session_notice.setWordWrap(True); self.session_notice.hide()
         self.activity = QLabel("● Codex CLI 터미널")
         self.activity.setObjectName("activity")
-        self.terminal_bridge = TerminalBridge(self)
-        self.terminal = QWebEngineView()
-        self.terminal.setAccessibleName("Codex 터미널")
-        self.terminal.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
-        self.terminal.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.terminal_channel = QWebChannel(self.terminal)
-        self.terminal_channel.registerObject("bridge", self.terminal_bridge)
-        self.terminal.page().setWebChannel(self.terminal_channel)
-        self.terminal.setHtml(TERMINAL_HTML, QUrl("https://cdn.jsdelivr.net/npm/xterm@5.3.0/"))
+        self.terminal_bridges = {}
+        self.terminal = self._create_terminal_view("main")
+        self.terminal_bridge = self.terminal_bridges["main"]
+        self.split_terminal = self._create_terminal_view("split")
+        self.split_terminal.hide()
+        self.terminal_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.terminal_splitter.setChildrenCollapsible(False)
+        self.terminal_splitter.addWidget(self.terminal)
+        self.terminal_splitter.addWidget(self.split_terminal)
+        self.terminal_splitter.setSizes([1, 0])
         self.center_stack = QStackedWidget()
-        self.center_stack.addWidget(self.terminal)
+        self.center_stack.addWidget(self.terminal_splitter)
         self.file_page = QWidget(); file_page_layout = QVBoxLayout(self.file_page); file_page_layout.setContentsMargins(0, 0, 0, 0); file_page_layout.setSpacing(8)
         self.file_view = QPlainTextEdit(); self.file_view.setObjectName("fileView"); self.file_view.setReadOnly(True); self.file_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap); file_page_layout.addWidget(self.file_view, 1)
         self.center_stack.addWidget(self.file_page)
@@ -481,6 +493,7 @@ class MainWindow(QMainWindow):
         right_header_layout.addWidget(self._title("프로젝트 파일"))
         right_header_layout.addStretch(1)
         self.file_change_summary = QLabel("변경 없음"); self.file_change_summary.setObjectName("changeSummary")
+        self.file_change_summary.hide()
         right_layout.addWidget(right_header)
         self.workspace_label = QLabel(str(self.workspace)); self.workspace_label.setObjectName("workspacePath"); self.workspace_label.setWordWrap(True); right_layout.addWidget(self.workspace_label)
         self.git_status_label = QLabel("Git 상태 확인 중…"); self.git_status_label.setObjectName("gitStatus"); self.git_status_label.setWordWrap(True); right_layout.addWidget(self.git_status_label)
@@ -489,12 +502,15 @@ class MainWindow(QMainWindow):
         self.file_filter_timer.setSingleShot(True)
         self.file_filter_timer.setInterval(180)
         self.file_filter_timer.timeout.connect(lambda: self._filter_files(self.file_search.text()))
-        self.files = QTreeWidget(); self.files.setObjectName("fileTree"); self.files.setAccessibleName("작업 공간 파일 목록"); self.files.setHeaderHidden(True); self.files.setUniformRowHeights(True); self.files.setIndentation(16); self.files.itemClicked.connect(self._preview_file); self.files.itemActivated.connect(self._open_file_in_center); self.files.itemExpanded.connect(self._expand_folder); right_layout.addWidget(self.files, 1)
+        self.files = QTreeWidget(); self.files.setObjectName("fileTree"); self.files.setAccessibleName("작업 공간 파일 목록"); self.files.setHeaderHidden(True); self.files.setUniformRowHeights(True); self.files.setIndentation(16); self.files.setMinimumHeight(180); self.files.itemClicked.connect(self._preview_file); self.files.itemActivated.connect(self._open_file_in_center); self.files.itemExpanded.connect(self._expand_folder); right_layout.addWidget(self.files, 1)
         self.changed_list = QListWidget(); self.changed_list.setObjectName("changedList"); self.changed_list.setMinimumHeight(100); self.changed_list.setMaximumHeight(260); self.changed_list.itemClicked.connect(self._preview_changed_item)
+        self.changed_list.hide()
         self.preview_title = QLabel("파일을 선택하세요"); self.preview_title.setObjectName("previewTitle")
-        self.preview = QPlainTextEdit(); self.preview.setObjectName("preview"); self.preview.setReadOnly(True); self.preview.setPlaceholderText("파일을 선택하면 미리보기가 표시됩니다.")
+        self.preview_title.hide()
+        self.preview = QPlainTextEdit(); self.preview.setObjectName("preview"); self.preview.setReadOnly(True); self.preview.setMinimumHeight(120); self.preview.setPlaceholderText("파일을 선택하면 미리보기가 표시됩니다."); self.preview.hide()
         self.open_file_button = QPushButton("기본 앱에서 열기"); self.open_file_button.setObjectName("secondaryButton"); self.open_file_button.setEnabled(False); self.open_file_button.clicked.connect(self._open_preview_file)
         self.git_diff_button = QPushButton("Git Diff 보기"); self.git_diff_button.setObjectName("secondaryButton"); self.git_diff_button.setEnabled(False); self.git_diff_button.clicked.connect(self._show_git_diff)
+        file_actions = QWidget(right); file_actions_layout = QHBoxLayout(file_actions); file_actions_layout.setContentsMargins(0, 0, 0, 0); file_actions_layout.setSpacing(6); file_actions_layout.addWidget(self.open_file_button); file_actions_layout.addWidget(self.git_diff_button); file_actions.hide()
         change_actions = QWidget(right); change_actions_layout = QHBoxLayout(change_actions); change_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.approve_change_button = QPushButton("변경 승인"); self.approve_change_button.setObjectName("primaryButton"); self.approve_change_button.setEnabled(False); self.approve_change_button.clicked.connect(self._approve_change); change_actions_layout.addWidget(self.approve_change_button)
         self.rollback_change_button = QPushButton("되돌리기"); self.rollback_change_button.setObjectName("dangerButton"); self.rollback_change_button.setEnabled(False); self.rollback_change_button.clicked.connect(self._rollback_change); change_actions_layout.addWidget(self.rollback_change_button)
@@ -504,6 +520,7 @@ class MainWindow(QMainWindow):
         self.open_trash_button = QPushButton("복구 보관함 열기"); self.open_trash_button.setObjectName("secondaryButton"); self.open_trash_button.clicked.connect(self._open_rollback_trash)
         change_actions.hide()
         bulk_actions.hide()
+        self.open_trash_button.hide()
 
         root.addWidget(left); root.addWidget(center); root.addWidget(right); root.setSizes([270, 820, 340])
         root.setStretchFactor(0, 0); root.setStretchFactor(1, 1); root.setStretchFactor(2, 0)
@@ -644,7 +661,7 @@ class MainWindow(QMainWindow):
         self.open_file_tabs.pop(value, None)
         if self.active_file_relative == value:
             self.active_file_relative = None
-            self.center_stack.setCurrentWidget(self.terminal)
+            self.center_stack.setCurrentWidget(self.terminal_splitter)
         self._refresh_session_tabs()
 
     def _new_session(self) -> None:
@@ -708,19 +725,76 @@ class MainWindow(QMainWindow):
         self._schedule_terminal_start()
         self.statusBar().showMessage(f"세션을 닫았습니다: {record.name}")
 
+    def _create_terminal_view(self, pane_id: str) -> QWebEngineView:
+        bridge = TerminalBridge(self, pane_id)
+        view = QWebEngineView()
+        view.setAccessibleName(f"Codex 터미널 {pane_id}")
+        view.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
+        view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        channel = QWebChannel(view)
+        channel.registerObject("bridge", bridge)
+        view.page().setWebChannel(channel)
+        view.setHtml(TERMINAL_HTML, QUrl("https://cdn.jsdelivr.net/npm/xterm@5.3.0/"))
+        self.terminal_bridges[pane_id] = bridge
+        return view
+
+    def _ensure_terminal_session(self, session_id: str) -> TerminalSession:
+        session = self.terminal_sessions.get(session_id)
+        if session is None or not session.alive():
+            session = TerminalSession(self.workspace)
+            session.start()
+            self.terminal_sessions[session_id] = session
+        return session
+
+    def _toggle_terminal_split(self) -> None:
+        if self.split_terminal.isVisible():
+            self.split_terminal.hide()
+            self.terminal_splitter.setSizes([1, 0])
+            self._save_terminal_layout()
+            self.statusBar().showMessage("분할 터미널을 숨겼습니다. 세션은 계속 실행됩니다.")
+            return
+        primary_id = self._ensure_session_for_workspace()
+        records = self.sessions_by_workspace[str(self.workspace)]
+        split_id = self.terminal_pane_sessions.get("split")
+        if not split_id or split_id == primary_id or split_id not in {record.session_id for record in records}:
+            split_record = next((record for record in records if record.session_id != primary_id), None)
+            if split_record is None:
+                split_record = SessionRecord(uuid4().hex, f"세션 {len(records) + 1}")
+                records.append(split_record)
+            split_id = split_record.session_id
+        self._ensure_terminal_session(split_id)
+        self.terminal_pane_sessions["split"] = split_id
+        self.split_terminal.show()
+        self.terminal_splitter.setSizes([1, 1])
+        self.terminal_bridges["split"].set_active(split_id)
+        split_history = self.terminal_history.get(split_id)
+        if split_history:
+            self.terminal_bridges["split"].emit_output(split_id, split_history)
+        self._refresh_session_tabs(("session", primary_id))
+        self._save_terminal_layout()
+        self.statusBar().showMessage(f"분할 터미널을 열었습니다: {self._session_name(split_id)}")
+
+    def _session_name(self, session_id: str) -> str:
+        record = next((item for item in self.sessions_by_workspace[str(self.workspace)] if item.session_id == session_id), None)
+        return record.name if record else session_id
     def _start_terminal(self) -> None:
         try:
             session_id = self._ensure_session_for_workspace()
-            session = self.terminal_sessions.get(session_id)
-            if session is None or not session.alive():
-                session = TerminalSession(self.workspace)
-                session.start()
-                self.terminal_sessions[session_id] = session
+            session = self._ensure_terminal_session(session_id)
+            self.terminal_pane_sessions["main"] = session_id
             self.terminal_active = session_id
             self.terminal_bridge.set_active(session_id)
             history = self.terminal_history.get(session_id)
             if history:
-                self.terminal_bridge.emit_output(session_id, history)
+                for bridge in self.terminal_bridges.values():
+                    bridge.emit_output(session_id, history)
+            split_id = self.terminal_pane_sessions.get("split")
+            if self.split_terminal.isVisible() and split_id and split_id != session_id:
+                self._ensure_terminal_session(split_id)
+                self.terminal_bridges["split"].set_active(split_id)
+                split_history = self.terminal_history.get(split_id)
+                if split_history:
+                    self.terminal_bridges["split"].emit_output(split_id, split_history)
             self.restart_button.setEnabled(False)
             self.stop_button.setEnabled(True)
             if self.terminal_timer is None:
@@ -779,7 +853,8 @@ class MainWindow(QMainWindow):
                 continue
             if output:
                 self.terminal_history[session_id] = (self.terminal_history.get(session_id, "") + output)[-MAX_TERMINAL_HISTORY:]
-                self.terminal_bridge.emit_output(session_id, output)
+                for bridge in self.terminal_bridges.values():
+                    bridge.emit_output(session_id, output)
             if not session.alive() and session_id == self.terminal_active:
                 self.stop_button.setEnabled(False)
                 self.restart_button.setEnabled(True)
@@ -798,7 +873,11 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Codex CLI 입력 실패: {exc}")
 
     def _resize_terminal(self, columns: int, rows: int) -> None:
-        session = self.terminal_sessions.get(self.terminal_active)
+        self._resize_terminal_for_pane("main", columns, rows)
+
+    def _resize_terminal_for_pane(self, pane_id: str, columns: int, rows: int) -> None:
+        session_id = self.terminal_pane_sessions.get(pane_id) or self.terminal_active
+        session = self.terminal_sessions.get(session_id)
         if session is not None:
             session.resize(columns, rows)
 
@@ -844,6 +923,7 @@ class MainWindow(QMainWindow):
                 worker.requestInterruption()
                 worker.quit()
                 worker.wait(1500)
+        self._save_terminal_layout()
         self._save_workspaces()
         event.accept()
 
@@ -860,6 +940,7 @@ class MainWindow(QMainWindow):
                 sessions,
                 self.active_session_ids,
                 self.terminal_history,
+                self.terminal_layout_by_workspace,
             )
         except OSError as exc:
             self.statusBar().showMessage(f"작업 공간 목록을 저장하지 못했습니다: {exc}")
@@ -1590,6 +1671,7 @@ class MainWindow(QMainWindow):
 
     def _select_workspace_path(self, path: Path) -> None:
         if hasattr(self, "workspace"):
+            self._save_terminal_layout()
             self._save_workspace_file_tabs()
         self.workspace = path.resolve()
         self.tools = WorkspaceTools(self.workspace)
@@ -1597,6 +1679,8 @@ class MainWindow(QMainWindow):
         self.workspace_label.setText(str(self.workspace))
         self._load_workspace_file_tabs()
         self.terminal_active = ""
+        self.terminal_pane_sessions = {"main": "", "split": ""}
+        self._restore_terminal_layout()
         self.changed_files = set()
         self.all_files = []
         self.all_directories = []
@@ -1628,7 +1712,7 @@ class MainWindow(QMainWindow):
         if self.active_file_relative:
             self._load_file_view(self.active_file_relative)
         else:
-            self.center_stack.setCurrentWidget(self.terminal)
+            self.center_stack.setCurrentWidget(self.terminal_splitter)
         self._save_workspaces()
         self.statusBar().showMessage(f"작업 공간 선택됨: {self.workspace.name or self.workspace}")
 
@@ -1654,6 +1738,40 @@ class MainWindow(QMainWindow):
         next_workspace = self.workspaces[0] if target == self.workspace else self.workspace
         self._select_workspace_path(next_workspace)
 
+    def _quick_open(self) -> None:
+        """Open a searchable list of workspaces, sessions, and files."""
+        entries = []
+        for workspace in self.workspaces:
+            entries.append((f"작업 공간 · {workspace.name or workspace}", "workspace", str(workspace)))
+            for record in self.sessions_by_workspace.get(str(workspace), []):
+                entries.append((f"세션 · {workspace.name or workspace} / {record.name}", "session", f"{workspace}|{record.session_id}"))
+        for relative in self.all_files:
+            entries.append((f"파일 · {relative}", "file", relative))
+        if not entries:
+            return
+        labels = [label for label, _, _ in entries]
+        label, accepted = QInputDialog.getItem(self, "빠른 열기", "작업 공간·세션·파일", labels, 0, True)
+        if not accepted or not label:
+            return
+        selected = next((entry for entry in entries if entry[0] == label), None)
+        if selected is None:
+            selected = next((entry for entry in entries if label.casefold() in entry[0].casefold()), None)
+        if selected is None:
+            return
+        _, kind, value = selected
+        if kind == "workspace":
+            self._select_workspace_path(Path(value))
+        elif kind == "session":
+            workspace_value, session_id = value.split("|", 1)
+            self._select_workspace_path(Path(workspace_value))
+            self.active_session_ids[str(self.workspace)] = session_id
+            self._refresh_session_tabs(("session", session_id))
+            self._show_terminal_view()
+        else:
+            item = QTreeWidgetItem()
+            item.setData(0, Qt.ItemDataRole.UserRole, value)
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, True)
+            self._open_file_in_center(item)
     def _schedule_file_filter(self, query: str) -> None:
         self.file_filter_timer.start()
 
@@ -1805,9 +1923,9 @@ class MainWindow(QMainWindow):
             self.preview_path = self.tools.resolve(relative)
             self.open_file_button.setEnabled(True)
             self.open_file_button.setText(f"기본 앱에서 열기 · {self.preview_path.name}")
-            self._preview_file_by_path(relative)
+            self._open_file_in_center(item)
             return
-        self._preview_file_content(relative)
+        self._open_file_in_center(item)
 
     def _open_file_in_center(self, item: QTreeWidgetItem, column: int = 0) -> None:
         relative = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1858,7 +1976,7 @@ class MainWindow(QMainWindow):
         if refresh_tabs:
             self._refresh_session_tabs(("session", self._ensure_session_for_workspace()))
         self.file_view_back_button.hide()
-        self.center_stack.setCurrentWidget(self.terminal)
+        self.center_stack.setCurrentWidget(self.terminal_splitter)
         self.terminal.setFocus()
         self.statusBar().showMessage("Codex CLI 터미널로 돌아왔습니다.")
 
@@ -1897,6 +2015,74 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage(f"파일을 열 수 없습니다: {self.preview_path.name}")
 
+    def _create_worktree(self) -> None:
+        current = self.workspace.resolve()
+        branch, accepted = QInputDialog.getText(
+            self,
+            "새 Git worktree",
+            "새 브랜치 이름(여러 개는 쉼표 또는 줄바꿈)",
+            text=f"worktree-{datetime.now():%m%d-%H%M}",
+        )
+        branches = [value.strip() for value in re.split(r"[,\n]+", branch) if value.strip()]
+        if not accepted or not branches:
+            return
+        parent_text = QFileDialog.getExistingDirectory(
+            self,
+            "worktree를 만들 상위 폴더 선택",
+            str(current.parent),
+        )
+        if not parent_text:
+            return
+        targets = [
+            Path(parent_text) / f"{current.name}-{re.sub(r'[^A-Za-z0-9._-]+', '-', value).strip('.-') or 'worktree'}"
+            for value in branches
+        ]
+        try:
+            created_paths = WorkspaceTools(current).git_worktree_create_many(targets, branches)
+        except (OSError, RuntimeError, ValueError) as exc:
+            QMessageBox.warning(self, "Git worktree 생성 실패", str(exc))
+            return
+        for created in created_paths:
+            if created not in self.workspaces:
+                self.workspaces.append(created)
+            key = str(created)
+            self.sessions_by_workspace.setdefault(key, [SessionRecord(uuid4().hex, "세션 1")])
+            self.active_session_ids.setdefault(key, self.sessions_by_workspace[key][0].session_id)
+            self.open_files_by_workspace.setdefault(key, {})
+            self.active_files_by_workspace.setdefault(key, None)
+        self._save_workspaces()
+        self._refresh_workspaces()
+        self._select_workspace_path(created_paths[-1])
+
+    def _save_terminal_layout(self) -> None:
+        if not hasattr(self, "terminal_layout_by_workspace") or not hasattr(self, "split_terminal"):
+            return
+        key = str(self.workspace)
+        split_id = self.terminal_pane_sessions.get("split", "")
+        if self.split_terminal.isVisible() and split_id:
+            sizes = [max(1, int(size)) for size in self.terminal_splitter.sizes()]
+            if len(sizes) == 2:
+                self.terminal_layout_by_workspace[key] = {"visible": True, "split_session": split_id, "sizes": sizes}
+        else:
+            self.terminal_layout_by_workspace.pop(key, None)
+
+    def _restore_terminal_layout(self) -> None:
+        if not hasattr(self, "split_terminal"):
+            return
+        layout = self.terminal_layout_by_workspace.get(str(self.workspace), {})
+        records = self.sessions_by_workspace.get(str(self.workspace), [])
+        split_id = layout.get("split_session") if isinstance(layout, dict) else None
+        valid_ids = {record.session_id for record in records}
+        if layout.get("visible") is True and isinstance(split_id, str) and split_id in valid_ids:
+            self.terminal_pane_sessions["split"] = split_id
+            self.split_terminal.show()
+            sizes = layout.get("sizes")
+            self.terminal_splitter.setSizes([int(sizes[0]), int(sizes[1])] if isinstance(sizes, list) and len(sizes) == 2 else [1, 1])
+        else:
+            self.terminal_pane_sessions["split"] = ""
+            self.split_terminal.hide()
+            self.terminal_splitter.setSizes([1, 0])
+
     def _choose_workspace(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "작업 공간 선택", str(self.workspace))
         if selected:
@@ -1906,27 +2092,28 @@ class MainWindow(QMainWindow):
     def _style() -> str:
         return """
         * { outline: none; }
-        QMainWindow, QWidget { background:#0d1117; color:#e6edf3; font-size:13px; }
-        QWidget#sidebar, QWidget#filePanel { background:#111820; border-color:#29323d; }
-        QWidget#centerPanel { background:#0d1117; }
-        QWidget#tabHeader { background:#0d1117; border-bottom:1px solid #29323d; }
-        QSplitter::handle { background:#202936; width:5px; }
-        QSplitter::handle:hover { background:#3c6570; }
-        QLabel#brand { color:#f0f6fc; font-size:17px; font-weight:800; letter-spacing:1.3px; padding:2px 0; }
-        QLabel#brandSubtitle { color:#8796a5; font-size:10px; font-weight:700; letter-spacing:1.1px; padding-bottom:8px; }
-        QLabel#section { color:#a6b4c1; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:7px; padding-bottom:2px; }
-        QLabel#workspacePath, QLabel#gitStatus { color:#c7d1db; background:#161e27; border:1px solid #2a3541; border-radius:6px; padding:9px; }
+        QMainWindow, QWidget { background:#0f1013; color:#e7e9ed; font-size:13px; }
+        QWidget#sidebar { background:#17181c; border-right:1px solid #2a2c32; }
+        QWidget#filePanel { background:#15161a; border-left:1px solid #2a2c32; }
+        QWidget#centerPanel { background:#101114; }
+        QWidget#terminalToolbar, QWidget#tabHeader { background:#111216; border-bottom:1px solid #2a2c32; }
+        QSplitter::handle { background:#292b31; width:4px; }
+        QSplitter::handle:hover { background:#7064a8; }
+        QLabel#brand { color:#f5f5f7; font-size:16px; font-weight:800; letter-spacing:1.2px; padding:2px 0; }
+        QLabel#brandSubtitle { color:#858792; font-size:10px; font-weight:700; letter-spacing:1.1px; padding-bottom:8px; }
+        QLabel#section { color:#b5b6bd; font-size:11px; font-weight:800; letter-spacing:.8px; padding-top:7px; padding-bottom:2px; }
+        QLabel#workspacePath, QLabel#gitStatus { color:#c9cad1; background:#1d1e23; border:1px solid #303239; border-radius:5px; padding:9px; }
         QLabel#workspacePath { font-size:12px; }
-        QLabel#changeSummary { color:#8ee0bd; background:#153d34; border:1px solid #347d68; border-radius:10px; padding:5px 9px; font-size:11px; font-weight:750; }
-        QTabBar#topTabs { background:#0a0f14; }
+        QLabel#changeSummary { color:#d8cfff; background:#29243e; border:1px solid #66589d; border-radius:10px; padding:5px 9px; font-size:11px; font-weight:750; }
+        QTabBar#topTabs { background:#111216; }
         QTabBar#topTabs::tab { background:#111820; color:#8d9aa6; border:1px solid #202c37; border-top:2px solid transparent; border-bottom:1px solid #202c37; padding:0 4px 0 10px; margin:5px 3px 0 0; min-width:0; min-height:38px; }
         QTabBar#topTabs::tab:hover { background:#18242d; color:#e7f0f1; border-color:#344550; border-top-color:#5a8c83; }
         QTabBar#topTabs::tab:selected { background:#1a2932; color:#f2faf8; border-color:#315047; border-top-color:#75ddb2; border-bottom-color:#1a2932; }
         QToolButton#simpleTabCloseButton { background:transparent; border:0; color:#82929e; font-size:15px; font-weight:400; padding:0; margin-left:4px; margin-right:6px; border-radius:4px; }
         QToolButton#simpleTabCloseButton:hover { background:#30434d; color:#f4fffc; }
         QToolButton#simpleTabCloseButton:pressed { background:#3b5e60; color:#ffffff; }
-        QPlainTextEdit#fileView { background:#0d1117; border:1px solid #293641; border-radius:4px; padding:16px; color:#d9e7e3; font-family:Consolas, 'Cascadia Code', monospace; font-size:13px; }
-        QLabel#activity { color:#dfffee; background:#15523f; border:1px solid #48b58d; border-radius:9px; padding:9px 12px; font-weight:750; }
+        QPlainTextEdit#fileView { background:#101114; border:1px solid #2b2d34; border-radius:4px; padding:16px; color:#dfe0e5; font-family:Consolas, 'Cascadia Code', monospace; font-size:13px; }
+        QLabel#activity { color:#e4ddff; background:#292542; border:1px solid #776ab4; border-radius:8px; padding:9px 12px; font-weight:750; }
         QLabel#approvalNotice { color:#b9c9d8; background:#162337; border:1px solid #2b4159; border-radius:9px; padding:8px 11px; }
         QLabel#approvalNotice[pending="true"] { color:#ffe9b0; background:#48381d; border-color:#b08a3d; }
         QLabel#sessionNotice { color:#ffe1a0; background:#3c311d; border:1px solid #806532; border-radius:9px; padding:8px 11px; }
@@ -1934,50 +2121,50 @@ class MainWindow(QMainWindow):
         QLabel#previewTitle { color:#d2e0ec; font-size:12px; font-weight:650; padding:2px; }
         QLabel#hint { color:#8fa5ba; font-size:11px; padding-top:2px; }
         QLabel { color:#d5e1ec; }
-        QLineEdit, QListWidget, QTreeWidget, QPlainTextEdit, QWebEngineView { background:#0d1117; border:1px solid #293641; border-radius:5px; }
-        QWebEngineView { border-color:#293641; }
-        QLineEdit { padding:9px 11px; color:#edf5fb; selection-background-color:#245a67; }
-        QLineEdit:focus, QPlainTextEdit:focus, QListWidget:focus, QTreeWidget:focus, QWebEngineView:focus { border:2px solid #62c8b0; }
+        QLineEdit, QListWidget, QTreeWidget, QPlainTextEdit, QWebEngineView { background:#101114; border:1px solid #2b2d34; border-radius:5px; }
+        QWebEngineView { border-color:#2b2d34; }
+        QLineEdit { padding:9px 11px; color:#f0f0f3; selection-background-color:#4b3e73; }
+        QLineEdit:focus, QPlainTextEdit:focus, QListWidget:focus, QTreeWidget:focus, QWebEngineView:focus { border:2px solid #8b7bd0; }
         QListWidget, QTreeWidget, QPlainTextEdit { padding:5px; }
         QListWidget::item, QTreeWidget::item { min-height:22px; padding:6px 8px; border-radius:4px; }
-        QListWidget::item:hover, QTreeWidget::item:hover { background:#1b2c38; }
-        QListWidget::item:selected, QTreeWidget::item:selected { background:#1f4d4c; color:#f4fffb; border-left:3px solid #76d5ae; }
-        QPushButton { min-height:38px; background:#1b2a38; border:1px solid #3a5367; border-radius:6px; padding:0 12px; color:#e6f0f7; font-weight:650; }
-        QPushButton:hover { background:#294a61; border-color:#78b6c5; }
-        QPushButton:focus { border:2px solid #62c8b0; }
-        QPushButton:pressed { background:#142638; }
-        QPushButton:disabled { background:#162333; border-color:#2c3e52; color:#71859a; }
-        QPushButton#primaryButton { background:#287b68; border-color:#62cda8; color:#f1fff9; }
-        QPushButton#primaryButton:hover { background:#359b82; border-color:#9be8c8; }
-        QPushButton#compactButton { min-height:36px; background:#1a2e41; border:1px solid #3e5d76; border-radius:6px; padding:0 11px; color:#d2e1eb; font-size:12px; font-weight:650; }
-        QPushButton#compactButton:hover { background:#294a61; border-color:#82bdc9; color:#f1fffb; }
-        QPushButton#compactButton:disabled { background:#162333; border-color:#2c3e52; color:#71859a; }
-        QPushButton#secondaryButton { background:#1a2e41; border-color:#3e5d76; color:#d2e1eb; }
-        QPushButton#secondaryButton:hover { background:#294a61; border-color:#82bdc9; color:#f1fffb; }
-        QPushButton#dangerButton { background:#51313e; border-color:#a7677b; color:#ffe0e6; }
-        QPushButton#dangerButton:hover { background:#704252; border-color:#dc92a4; color:#ffffff; }
-        QPushButton#iconButton { min-height:38px; background:#1a2e41; border:1px solid #3e5d76; border-radius:6px; padding:0; color:#d2e1eb; font-size:15px; font-weight:700; }
-        QPushButton#iconButton:hover { background:#294a61; border-color:#82bdc9; color:#ffffff; }
-        QPushButton#dangerIconButton { min-height:38px; background:#51313e; border:1px solid #a7677b; border-radius:8px; padding:0; color:#ffe0e6; font-size:11px; }
-        QPushButton#dangerIconButton:hover { background:#704252; border-color:#dc92a4; color:#ffffff; }
-        QProgressBar#usageBar { background:#0e171e; border:1px solid #2a3b45; border-radius:4px; color:#dcece8; text-align:center; min-height:18px; max-height:18px; }
-        QProgressBar#usageBar::chunk { background:#3b9e79; border-radius:4px; }
-        QTabBar#workspaceTabs { background:#0b0f14; }
-        QTabBar#workspaceTabs::tab { background:#111820; color:#94a3af; border:0; border-right:1px solid #2a3541; border-bottom:2px solid #2a3541; padding:0 11px; margin:0; min-height:42px; }
-        QTabBar#workspaceTabs::tab:hover { color:#edf4f7; background:#17212b; }
-        QTabBar#workspaceTabs::tab:selected { color:#f0f6fc; background:#17212b; border-bottom:2px solid #65d5a3; }
-        QScrollBar:vertical { background:#111a21; width:10px; margin:3px; }
-        QScrollBar::handle:vertical { background:#3d5960; border-radius:5px; min-height:28px; }
-        QScrollBar::handle:vertical:hover { background:#5d7d80; }
+        QListWidget::item:hover, QTreeWidget::item:hover { background:#24252b; }
+        QListWidget::item:selected, QTreeWidget::item:selected { background:#332b50; color:#f7f3ff; border-left:3px solid #9a8add; }
+        QPushButton { min-height:36px; background:#24252a; border:1px solid #3a3b43; border-radius:5px; padding:0 12px; color:#e7e8ec; font-weight:650; }
+        QPushButton:hover { background:#302f3b; border-color:#8174bd; }
+        QPushButton:focus { border:2px solid #8b7bd0; }
+        QPushButton:pressed { background:#1d1d22; }
+        QPushButton:disabled { background:#1b1c20; border-color:#2d2e34; color:#71727c; }
+        QPushButton#primaryButton { background:#6654a1; border-color:#9e8ddd; color:#ffffff; }
+        QPushButton#primaryButton:hover { background:#7867b9; border-color:#c0b6ef; }
+        QPushButton#compactButton { min-height:34px; background:#24252a; border:1px solid #3a3b43; border-radius:5px; padding:0 11px; color:#d8d9df; font-size:12px; font-weight:650; }
+        QPushButton#compactButton:hover { background:#302f3b; border-color:#8174bd; color:#ffffff; }
+        QPushButton#compactButton:disabled { background:#1b1c20; border-color:#2d2e34; color:#71727c; }
+        QPushButton#secondaryButton { background:#24252a; border-color:#3a3b43; color:#d8d9df; }
+        QPushButton#secondaryButton:hover { background:#302f3b; border-color:#8174bd; color:#ffffff; }
+        QPushButton#dangerButton { background:#442832; border-color:#8d5369; color:#ffdbe6; }
+        QPushButton#dangerButton:hover { background:#5d3343; border-color:#c87997; color:#ffffff; }
+        QPushButton#iconButton { min-height:36px; background:#24252a; border:1px solid #3a3b43; border-radius:5px; padding:0; color:#d8d9df; font-size:15px; font-weight:700; }
+        QPushButton#iconButton:hover { background:#302f3b; border-color:#8174bd; color:#ffffff; }
+        QPushButton#dangerIconButton { min-height:36px; background:#442832; border:1px solid #8d5369; border-radius:6px; padding:0; color:#ffdbe6; font-size:11px; }
+        QPushButton#dangerIconButton:hover { background:#5d3343; border-color:#c87997; color:#ffffff; }
+        QProgressBar#usageBar { background:#1b1c21; border:1px solid #30313a; border-radius:4px; color:#e5e1ff; text-align:center; min-height:18px; max-height:18px; }
+        QProgressBar#usageBar::chunk { background:#7564b4; border-radius:4px; }
+        QTabBar#workspaceTabs { background:transparent; }
+        QTabBar#workspaceTabs::tab { background:#1b1c21; color:#92939d; border:1px solid #2d2e35; border-bottom:2px solid #2d2e35; padding:0 11px; margin:0 3px 0 0; min-height:30px; }
+        QTabBar#workspaceTabs::tab:hover { color:#f0eefc; background:#29263a; border-color:#645a91; }
+        QTabBar#workspaceTabs::tab:selected { color:#f7f4ff; background:#332b50; border-color:#7564b4; border-bottom:2px solid #a696e0; }
+        QScrollBar:vertical { background:#15161a; width:9px; margin:3px; }
+        QScrollBar::handle:vertical { background:#41414b; border-radius:4px; min-height:28px; }
+        QScrollBar::handle:vertical:hover { background:#7564b4; }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
-        QStatusBar { background:#0b0f14; color:#91aaa5; border-top:1px solid #263943; padding:0; }
-        QWidget#statusUsage { background:#0b0f14; border:0; }
-        QWidget#statusUsage[hovered="true"] { background:#171b20; }
+        QStatusBar { background:#111216; color:#a9aab3; border-top:1px solid #2a2c32; padding:0; }
+        QWidget#statusUsage { background:#111216; border:0; }
+        QWidget#statusUsage[hovered="true"] { background:#24252a; }
         QWidget#statusUsage[hovered="true"] QLabel#statusUsageIcon { color:#ffffff; }
         QWidget#statusUsage[hovered="true"] QLabel#statusUsageLabel { color:#ffffff; }
         QWidget#statusUsage[hovered="true"] QProgressBar#statusUsageBar { background:#3a4046; }
-        QLabel#statusUsageIcon { color:#dce7e5; font-size:13px; }
-        QLabel#statusUsageLabel { color:#e6edf3; font-size:12px; font-weight:650; }
+        QLabel#statusUsageIcon { color:#d8d1ff; font-size:13px; }
+        QLabel#statusUsageLabel { color:#e7e7eb; font-size:12px; font-weight:650; }
         QPushButton#statusUsageRefreshButton { min-height:24px; background:transparent; border:0; color:#93a3ad; font-size:16px; font-weight:400; padding:0; }
         QPushButton#statusUsageRefreshButton:hover { background:#263440; color:#f0f6fc; border-radius:3px; }
         QPushButton#statusUsageRefreshButton:pressed { background:#35515b; color:#ffffff; }

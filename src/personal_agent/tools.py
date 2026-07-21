@@ -105,6 +105,33 @@ class WorkspaceTools:
             entries[relative] = code
         return {"available": True, "message": "", "branch": branch, "entries": entries}
 
+    def git_worktree_create(self, target: Path, branch: str, base: str = "HEAD") -> Path:
+        """Create an isolated Git worktree beside the current workspace."""
+        target = Path(target).expanduser().resolve()
+        branch = branch.strip()
+        if not branch or branch.startswith("-"):
+            raise ValueError("브랜치 이름이 올바르지 않습니다.")
+        if target == self.root or target.exists():
+            raise ValueError("worktree 대상 폴더가 이미 존재합니다.")
+        if not target.parent.exists():
+            raise ValueError("worktree 상위 폴더가 존재하지 않습니다.")
+        result = subprocess.run(
+            ["git", "worktree", "add", "-b", branch, str(target), base],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(detail or "Git worktree를 생성하지 못했습니다.")
+        return target
+
+    def git_worktree_create_many(self, targets: list[Path], branches: list[str], base: str = "HEAD") -> list[Path]:
+        if len(targets) != len(branches) or not targets:
+            raise ValueError("worktree 대상과 브랜치 수가 일치해야 합니다.")
+        return [self.git_worktree_create(target, branch, base) for target, branch in zip(targets, branches)]
+
     def git_diff_file(self, relative: str) -> str:
         """Return tracked, staged, or untracked diff for one contained file."""
         path = self.resolve(relative)

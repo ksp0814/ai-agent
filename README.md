@@ -88,6 +88,9 @@ export OPENAI_BASE_URL="https://your-compatible-endpoint/v1"
 - 신규 파일 되돌리기 시 복구 보관함으로 안전하게 이동
 - 마지막 작업 공간 자동 복원 및 작업 공간별 Codex 세션 유지
 - 작업 공간별 Codex 세션 생성·전환·이름 변경·닫기
+- 여러 Git worktree 일괄 생성 및 작업 공간 자동 등록
+- 작업 공간별 독립 Codex 터미널 split 및 split 상태 복원
+- `Ctrl+P` 빠른 열기: 작업 공간·세션·파일 검색
 - 여러 세션 사용 시 동일 파일 동시 수정 경고
 - 터미널 출력 검색·화면 지우기·글자 크기 조절·클립보드 단축키
 - xterm.js 기반 Codex CLI 터미널과 macOS PTY·Windows ConPTY 지원

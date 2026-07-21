@@ -34,6 +34,41 @@ class WorkspaceToolsTests(unittest.TestCase):
             self.assertEqual(files, [str(Path("src") / "main.py")])
             self.assertEqual(directories, [str(Path("src"))])
 
+    def test_git_worktree_create(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+            (root / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "초기 커밋"], cwd=root, check=True)
+
+            target = root.parent / "sample-worktree"
+            created = WorkspaceTools(root).git_worktree_create(target, "feature/sample")
+
+            self.assertEqual(created, target.resolve())
+            self.assertEqual((target / "README.md").read_text(encoding="utf-8"), "main\n")
+            self.assertTrue((target / ".git").exists())
+            subprocess.run(["git", "worktree", "remove", "--force", str(target)], cwd=root, check=True)
+
+    def test_git_worktree_create_many(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+            (root / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "초기 커밋"], cwd=root, check=True)
+
+            targets = [root.parent / "sample-one", root.parent / "sample-two"]
+            created = WorkspaceTools(root).git_worktree_create_many(targets, ["feature/one", "feature/two"])
+
+            self.assertEqual(created, [target.resolve() for target in targets])
+            self.assertTrue(all((target / "README.md").exists() for target in targets))
+            for target in targets:
+                subprocess.run(["git", "worktree", "remove", "--force", str(target)], cwd=root, check=True)
     def test_git_snapshot_and_untracked_diff(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

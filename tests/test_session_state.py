@@ -63,6 +63,29 @@ class WorkspaceStateTests(unittest.TestCase):
             _, _, loaded_history = store.load_sessions()
             self.assertEqual(loaded_history["session-1"], "x" * 100_000)
 
+    def test_saves_and_loads_terminal_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            store = WorkspaceStateStore(root / "state.json")
+            layout = {str(workspace): {"visible": True, "split_session": "session-2", "sizes": [640, 360]}}
+
+            store.save([workspace], workspace, terminal_layout=layout)
+
+            self.assertEqual(store.load_terminal_layout(), layout)
+
+    def test_ignores_invalid_terminal_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = root / "state.json"
+            state_path.write_text(
+                json.dumps({"terminal_layout": {"workspace": {"visible": "yes", "sizes": [1]}}}),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(WorkspaceStateStore(state_path).load_terminal_layout(), {})
+
 
 if __name__ == "__main__":
     unittest.main()

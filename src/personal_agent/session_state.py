@@ -82,6 +82,25 @@ class WorkspaceStateStore:
         }
         return cleaned_sessions, cleaned_active, cleaned_history
 
+    def load_terminal_layout(self) -> dict[str, dict[str, object]]:
+        payload = self._read_payload()
+        raw_layout = payload.get("terminal_layout", {}) if isinstance(payload, dict) else {}
+        if not isinstance(raw_layout, dict):
+            return {}
+        layout: dict[str, dict[str, object]] = {}
+        for workspace, value in raw_layout.items():
+            if not isinstance(workspace, str) or not isinstance(value, dict):
+                continue
+            visible = value.get("visible")
+            split_session = value.get("split_session")
+            sizes = value.get("sizes")
+            if not isinstance(visible, bool) or not isinstance(split_session, str) or not split_session:
+                continue
+            if not isinstance(sizes, list) or len(sizes) != 2 or not all(isinstance(size, int) and size > 0 for size in sizes):
+                continue
+            layout[workspace] = {"visible": visible, "split_session": split_session, "sizes": sizes}
+        return layout
+
     def save(
         self,
         workspaces: list[Path],
@@ -89,6 +108,7 @@ class WorkspaceStateStore:
         sessions: Optional[dict[str, list[dict[str, str]]]] = None,
         active_sessions: Optional[dict[str, str]] = None,
         terminal_history: Optional[dict[str, str]] = None,
+        terminal_layout: Optional[dict[str, dict[str, object]]] = None,
     ) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -101,6 +121,8 @@ class WorkspaceStateStore:
             payload["active_sessions"] = active_sessions
         if terminal_history is not None:
             payload["terminal_history"] = terminal_history
+        if terminal_layout is not None:
+            payload["terminal_layout"] = terminal_layout
         temporary = self.path.with_name(f".{self.path.name}.tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self.path)
