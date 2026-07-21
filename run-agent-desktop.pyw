@@ -3,10 +3,15 @@
 import ctypes
 from datetime import datetime
 from pathlib import Path
+import sys
 import traceback
 
 
 LOG_PATH = Path.home() / ".personal-agent" / "desktop-startup.log"
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_ROOT = PROJECT_ROOT / "src"
+if SRC_ROOT.is_dir() and str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 
 def write_log(message: str) -> None:

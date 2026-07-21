@@ -4,6 +4,19 @@ import sys
 from pathlib import Path
 
 
+IGNORED_DIRECTORIES = {
+    ".git",
+    ".agent",
+    ".venv",
+    ".venv-py314",
+    ".venv-py313",
+    ".idea",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+}
+
+
 class WorkspaceTools:
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -17,7 +30,7 @@ class WorkspaceTools:
     def list_files(self, limit: int = 100) -> list[str]:
         files = []
         for path in sorted(self.root.rglob("*")):
-            if ".git" in path.parts or ".agent" in path.parts or not path.is_file():
+            if any(part in IGNORED_DIRECTORIES for part in path.parts) or not path.is_file():
                 continue
             files.append(str(path.relative_to(self.root)))
             if len(files) >= limit:
@@ -28,7 +41,7 @@ class WorkspaceTools:
         """Scan files and directories in one traversal for the desktop tree."""
         files, directories = [], []
         for current, dir_names, file_names in os.walk(self.root):
-            dir_names[:] = sorted(name for name in dir_names if name not in {".git", ".agent"})
+            dir_names[:] = sorted(name for name in dir_names if name not in IGNORED_DIRECTORIES)
             relative_dir = Path(current).relative_to(self.root)
             if relative_dir != Path(".") and len(directories) < directory_limit:
                 directories.append(str(relative_dir))
@@ -64,15 +77,8 @@ class WorkspaceTools:
     def git_snapshot(self) -> dict:
         """Return read-only branch and porcelain status information."""
         try:
-            branch_result = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=self.root,
-                text=True,
-                capture_output=True,
-                timeout=30,
-            )
             status_result = subprocess.run(
-                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                ["git", "status", "--porcelain=v1", "-b", "--untracked-files=normal"],
                 cwd=self.root,
                 text=True,
                 capture_output=True,
@@ -80,11 +86,16 @@ class WorkspaceTools:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"available": False, "message": str(exc), "branch": "", "entries": {}}
-        if branch_result.returncode != 0 or status_result.returncode != 0:
-            detail = (status_result.stderr or branch_result.stderr).strip()
+        if status_result.returncode != 0:
+            detail = status_result.stderr.strip()
             return {"available": False, "message": detail or "Git 저장소가 아닙니다.", "branch": "", "entries": {}}
         entries = {}
-        for line in status_result.stdout.splitlines():
+        lines = status_result.stdout.splitlines()
+        branch = "(detached HEAD)"
+        if lines and lines[0].startswith("## "):
+            branch = lines[0][3:].split("...", 1)[0] or branch
+            lines = lines[1:]
+        for line in lines:
             if len(line) < 4:
                 continue
             code = line[:2]
@@ -92,7 +103,6 @@ class WorkspaceTools:
             if " -> " in relative:
                 relative = relative.rsplit(" -> ", 1)[-1]
             entries[relative] = code
-        branch = branch_result.stdout.strip() or "(detached HEAD)"
         return {"available": True, "message": "", "branch": branch, "entries": entries}
 
     def git_diff_file(self, relative: str) -> str:

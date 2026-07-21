@@ -19,6 +19,21 @@ class WorkspaceToolsTests(unittest.TestCase):
             result = WorkspaceTools(root).run_validation()
             self.assertIn("unittest discover", result)
 
+    def test_scan_tree_ignores_virtual_environments_and_caches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / ".venv" / "Lib").mkdir(parents=True)
+            (root / ".venv-py314").mkdir()
+            (root / "__pycache__").mkdir()
+            (root / "src" / "main.py").write_text("pass\n", encoding="utf-8")
+            (root / ".venv" / "Lib" / "site.py").write_text("ignored\n", encoding="utf-8")
+
+            files, directories = WorkspaceTools(root).scan_tree()
+
+            self.assertEqual(files, [str(Path("src") / "main.py")])
+            self.assertEqual(directories, [str(Path("src"))])
+
     def test_git_snapshot_and_untracked_diff(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
