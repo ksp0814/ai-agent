@@ -80,10 +80,16 @@ class TerminalSession:
         ready, _, _ = select.select([self.master_fd], [], [], 0.05)
         if not ready:
             return ""
-        try:
-            return os.read(self.master_fd, 8192).decode("utf-8", errors="replace")
-        except (OSError, ValueError):
-            return ""
+        chunks = []
+        while True:
+            try:
+                chunks.append(os.read(self.master_fd, 8192))
+            except (BlockingIOError, OSError, ValueError):
+                break
+            ready, _, _ = select.select([self.master_fd], [], [], 0)
+            if not ready or sum(len(chunk) for chunk in chunks) >= 65_536:
+                break
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
     def write(self, text: str) -> None:
         if platform.system() == "Windows":

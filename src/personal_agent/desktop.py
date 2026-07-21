@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 from datetime import datetime
 from dataclasses import dataclass
@@ -74,7 +76,7 @@ class AdaptiveTabBar(QTabBar):
         hint = super().tabSizeHint(index)
         text_width = self.fontMetrics().horizontalAdvance(self.tabText(index))
         icon_width = self.iconSize().width() + 6 if not self.tabIcon(index).isNull() else 0
-        close_width = 22 if self.tabButton(index, QTabBar.ButtonPosition.RightSide) else 0
+        close_width = 26 if self.tabButton(index, QTabBar.ButtonPosition.RightSide) else 0
         width = max(76, min(420, text_width + icon_width + close_width + 18))
         return QSize(width, max(38, hint.height()))
 
@@ -122,6 +124,42 @@ new QWebChannel(qt.webChannelTransport, function(channel) {
   window.addEventListener('resize', resize);
 });
 </script></body></html>"""
+
+MAX_PREVIEW_BYTES = 2 * 1024 * 1024
+MAX_TERMINAL_HISTORY = 100_000
+
+
+def _looks_binary(data: bytes) -> bool:
+    if not data:
+        return False
+    if b"\x00" in data:
+        return True
+    control_bytes = sum(value < 9 or 14 <= value < 32 for value in data)
+    return control_bytes / len(data) > 0.1
+
+
+def _capture_file_baseline(path: Path, captured_bytes: int = 0) -> tuple[FileBaseline, int]:
+    stat = path.stat()
+    with path.open("rb") as handle:
+        sample = handle.read(8192)
+    is_binary = _looks_binary(sample)
+    content = None
+    captured = 0
+    if not is_binary and stat.st_size <= 65_536 and captured_bytes + stat.st_size <= 2 * 1_048_576:
+        content = path.read_bytes()
+        captured = stat.st_size
+    return FileBaseline(stat.st_mtime_ns, stat.st_size, content, is_binary), captured
+
+
+def _read_preview(path: Path) -> tuple[str, bool, bool, int]:
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        data = handle.read(MAX_PREVIEW_BYTES + 1)
+    truncated = len(data) > MAX_PREVIEW_BYTES
+    data = data[:MAX_PREVIEW_BYTES]
+    if _looks_binary(data[:8192]):
+        return "", True, truncated, size
+    return data.decode("utf-8", errors="replace"), False, truncated, size
 
 
 @dataclass(frozen=True)
@@ -218,6 +256,31 @@ class FileChangeWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class FileBaselineWorker(QThread):
+    loaded = Signal(object, str)
+    failed = Signal(str)
+
+    def __init__(self, workspace: Path, files: list[str]):
+        super().__init__()
+        self.workspace = workspace
+        self.files = files
+
+    def run(self) -> None:
+        try:
+            baseline = {}
+            captured_bytes = 0
+            for relative in self.files:
+                try:
+                    snapshot, captured = _capture_file_baseline(self.workspace / relative, captured_bytes)
+                except OSError:
+                    continue
+                baseline[relative] = snapshot
+                captured_bytes += captured
+            self.loaded.emit(baseline, str(self.workspace))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class GitStatusWorker(QThread):
     loaded = Signal(object, str)
     failed = Signal(str)
@@ -299,6 +362,8 @@ class MainWindow(QMainWindow):
         self.scan_workers = []
         self.git_status_worker = None
         self.git_diff_worker = None
+        self.baseline_worker = None
+        self.pending_baseline = None
         self.git_entries = {}
         self.git_branch_name = ""
         self.git_available = False
@@ -320,7 +385,6 @@ class MainWindow(QMainWindow):
         self.all_files = []
         self.all_directories = []
         self.preview_relative = None
-        self.approval_pending = False
         self.open_file_tabs = {}
         self.active_file_relative = None
         self.open_files_by_workspace = {}
@@ -331,7 +395,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._refresh_files()
         self.change_timer = QTimer(self)
-        self.change_timer.setInterval(15_000)
+        self.change_timer.setInterval(30_000)
         self.change_timer.timeout.connect(self._check_file_changes)
         self.change_timer.start()
         self.git_status_timer = QTimer(self)
@@ -393,13 +457,6 @@ class MainWindow(QMainWindow):
         self.session_notice = QLabel(); self.session_notice.setObjectName("sessionNotice"); self.session_notice.setWordWrap(True); self.session_notice.hide()
         self.activity = QLabel("● Codex CLI 터미널")
         self.activity.setObjectName("activity")
-        self.approval_label = QLabel("승인 대기 없음 · Codex CLI 화면에서 승인 요청을 확인합니다.")
-        self.approval_label.setObjectName("approvalNotice")
-        self.approval_label.setWordWrap(True)
-        self.approval_focus_button = QPushButton("승인 요청으로 이동")
-        self.approval_focus_button.setObjectName("compactButton")
-        self.approval_focus_button.clicked.connect(self._focus_terminal_for_approval)
-        self.approval_focus_button.hide()
         self.terminal_bridge = TerminalBridge(self)
         self.terminal = QWebEngineView()
         self.terminal.setAccessibleName("Codex 터미널")
@@ -427,7 +484,11 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(right_header)
         self.workspace_label = QLabel(str(self.workspace)); self.workspace_label.setObjectName("workspacePath"); self.workspace_label.setWordWrap(True); right_layout.addWidget(self.workspace_label)
         self.git_status_label = QLabel("Git 상태 확인 중…"); self.git_status_label.setObjectName("gitStatus"); self.git_status_label.setWordWrap(True); right_layout.addWidget(self.git_status_label)
-        self.file_search = QLineEdit(); self.file_search.setObjectName("searchBox"); self.file_search.setAccessibleName("파일 검색"); self.file_search.setClearButtonEnabled(True); self.file_search.setPlaceholderText("파일 이름 검색…"); self.file_search.textChanged.connect(self._filter_files); right_layout.addWidget(self.file_search)
+        self.file_search = QLineEdit(); self.file_search.setObjectName("searchBox"); self.file_search.setAccessibleName("파일 검색"); self.file_search.setClearButtonEnabled(True); self.file_search.setPlaceholderText("파일 이름 검색…"); self.file_search.textChanged.connect(self._schedule_file_filter); right_layout.addWidget(self.file_search)
+        self.file_filter_timer = QTimer(self)
+        self.file_filter_timer.setSingleShot(True)
+        self.file_filter_timer.setInterval(180)
+        self.file_filter_timer.timeout.connect(lambda: self._filter_files(self.file_search.text()))
         self.files = QTreeWidget(); self.files.setObjectName("fileTree"); self.files.setAccessibleName("작업 공간 파일 목록"); self.files.setHeaderHidden(True); self.files.setUniformRowHeights(True); self.files.setIndentation(16); self.files.itemClicked.connect(self._preview_file); self.files.itemActivated.connect(self._open_file_in_center); self.files.itemExpanded.connect(self._expand_folder); right_layout.addWidget(self.files, 1)
         self.changed_list = QListWidget(); self.changed_list.setObjectName("changedList"); self.changed_list.setMinimumHeight(100); self.changed_list.setMaximumHeight(260); self.changed_list.itemClicked.connect(self._preview_changed_item)
         self.preview_title = QLabel("파일을 선택하세요"); self.preview_title.setObjectName("previewTitle")
@@ -707,10 +768,6 @@ class MainWindow(QMainWindow):
         self.activity.setText("● 중지됨 · 재시작 가능")
         self.statusBar().showMessage("Codex CLI 세션을 중지했습니다.")
 
-    def _focus_terminal_for_approval(self) -> None:
-        self.terminal.setFocus()
-        self.statusBar().showMessage("중앙 Codex CLI 화면에서 승인 요청을 확인하세요.")
-
     def _poll_terminal(self) -> None:
         if not self.terminal_sessions:
             return
@@ -721,15 +778,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Codex CLI 출력 읽기 실패: {exc}")
                 continue
             if output:
-                self.terminal_history[session_id] = (self.terminal_history.get(session_id, "") + output)[-100_000:]
-                lowered = output.lower()
-                if any(marker in lowered for marker in ("approve", "allow", "y/n", "승인", "허용")):
-                    self.approval_pending = True
-                    self.approval_label.setText("⚠ 승인 대기 · 중앙 Codex CLI 화면에서 요청을 확인하세요.")
-                    self.approval_label.setProperty("pending", True)
-                    self.approval_focus_button.show()
-                    self.approval_label.style().unpolish(self.approval_label)
-                    self.approval_label.style().polish(self.approval_label)
+                self.terminal_history[session_id] = (self.terminal_history.get(session_id, "") + output)[-MAX_TERMINAL_HISTORY:]
                 self.terminal_bridge.emit_output(session_id, output)
             if not session.alive() and session_id == self.terminal_active:
                 self.stop_button.setEnabled(False)
@@ -770,6 +819,8 @@ class MainWindow(QMainWindow):
             self.git_status_timer.stop()
         if self.usage_timer is not None:
             self.usage_timer.stop()
+        if self.file_filter_timer is not None:
+            self.file_filter_timer.stop()
         if self.terminal_timer is not None:
             self.terminal_timer.stop()
         for session in self.terminal_sessions.values():
@@ -781,6 +832,7 @@ class MainWindow(QMainWindow):
             self.git_diff_worker,
             self.usage_worker,
             self.reset_credit_worker,
+            self.baseline_worker,
             *self.scan_workers,
         ]
         seen = set()
@@ -1097,49 +1149,40 @@ class MainWindow(QMainWindow):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
             self.files.addTopLevelItem(item)
 
-    def _initialize_file_baseline(self, workspace: str, files: list[str]) -> None:
-        if workspace in self.file_baselines:
-            return
-        baseline = {}
-        root = Path(workspace)
-        captured_bytes = 0
-        for relative in files:
-            path = root / relative
-            try:
-                snapshot, captured = self._capture_file_baseline(path, captured_bytes)
-                baseline[relative] = snapshot
-                captured_bytes += captured
-            except OSError:
-                continue
-        self.file_baselines[workspace] = baseline
+    def _initialize_file_baseline(self, baseline: dict, workspace: str) -> None:
+        if workspace == str(self.workspace):
+            self.file_baselines[workspace] = baseline
+            self._refresh_changed_list()
 
     def _schedule_file_baseline(self, workspace: str, files: list[str]) -> None:
-        def initialize() -> None:
-            if workspace == str(self.workspace):
-                self._initialize_file_baseline(workspace, files)
+        if workspace in self.file_baselines:
+            return
+        if self._worker_is_running(self.baseline_worker):
+            self.pending_baseline = (workspace, files)
+            return
+        worker = FileBaselineWorker(Path(workspace), files)
+        self.baseline_worker = worker
+        worker.loaded.connect(self._initialize_file_baseline)
+        worker.failed.connect(lambda message: self.statusBar().showMessage(f"파일 기준선 생성 실패: {message}"))
+        worker.finished.connect(lambda worker=worker: self._baseline_finished(worker))
+        worker.start()
 
-        QTimer.singleShot(150, initialize)
+    def _baseline_finished(self, worker) -> None:
+        if worker is self.baseline_worker:
+            worker.deleteLater()
+            self.baseline_worker = None
+            pending = self.pending_baseline
+            self.pending_baseline = None
+            if pending is not None:
+                self._schedule_file_baseline(*pending)
 
     @staticmethod
     def _looks_binary(data: bytes) -> bool:
-        if not data:
-            return False
-        if b"\x00" in data:
-            return True
-        control_bytes = sum(value < 9 or 14 <= value < 32 for value in data)
-        return control_bytes / len(data) > 0.1
+        return _looks_binary(data)
 
-    def _capture_file_baseline(self, path: Path, captured_bytes: int = 0) -> tuple[FileBaseline, int]:
-        stat = path.stat()
-        with path.open("rb") as handle:
-            sample = handle.read(8192)
-        is_binary = self._looks_binary(sample)
-        content = None
-        captured = 0
-        if not is_binary and stat.st_size <= 65_536 and captured_bytes + stat.st_size <= 2 * 1_048_576:
-            content = path.read_bytes()
-            captured = stat.st_size
-        return FileBaseline(stat.st_mtime_ns, stat.st_size, content, is_binary), captured
+    @staticmethod
+    def _capture_file_baseline(path: Path, captured_bytes: int = 0) -> tuple[FileBaseline, int]:
+        return _capture_file_baseline(path, captured_bytes)
 
     def _check_file_changes(self) -> None:
         if self._worker_is_running(self.change_scan_worker):
@@ -1269,7 +1312,12 @@ class MainWindow(QMainWindow):
         if self.preview_path is not None:
             self.open_file_button.setText(f"기본 앱에서 열기 · {self.preview_path.name}")
         try:
-            new_content = current_path.read_bytes()
+            if current_path.exists() and current_path.stat().st_size > MAX_PREVIEW_BYTES:
+                with current_path.open("rb") as handle:
+                    new_content = handle.read(MAX_PREVIEW_BYTES + 1)
+                new_content += b"\n[Diff preview truncated]"
+            else:
+                new_content = current_path.read_bytes()
         except FileNotFoundError:
             new_content = b""
         if old_content is None:
@@ -1606,6 +1654,9 @@ class MainWindow(QMainWindow):
         next_workspace = self.workspaces[0] if target == self.workspace else self.workspace
         self._select_workspace_path(next_workspace)
 
+    def _schedule_file_filter(self, query: str) -> None:
+        self.file_filter_timer.start()
+
     def _filter_files(self, query: str) -> None:
         needle = unicodedata.normalize("NFC", query.strip()).casefold()
         if not needle:
@@ -1765,11 +1816,13 @@ class MainWindow(QMainWindow):
             return
         try:
             path = self.tools.resolve(relative)
-            data = path.read_bytes()
-            if b"\x00" in data[:8192]:
-                content = f"바이너리 파일이라 내용을 표시할 수 없습니다.\n\n파일 크기: {len(data):,} bytes"
+            text, is_binary, truncated, size = _read_preview(path)
+            if is_binary:
+                content = f"바이너리 파일이라 내용을 표시할 수 없습니다.\n\n파일 크기: {size:,} bytes"
             else:
-                content = data.decode("utf-8", errors="replace")
+                content = text
+                if truncated:
+                    content += f"\n\n[미리보기 제한: {MAX_PREVIEW_BYTES:,} bytes 중 앞부분만 표시]"
             self.open_file_tabs.setdefault(relative, None)
             self.active_file_relative = relative
             self._refresh_session_tabs(("file", relative))
@@ -1784,11 +1837,13 @@ class MainWindow(QMainWindow):
 
     def _load_file_view(self, relative: str) -> None:
         try:
-            data = self.tools.resolve(relative).read_bytes()
-            if b"\x00" in data[:8192]:
-                content = f"바이너리 파일이라 내용을 표시할 수 없습니다.\n\n파일 크기: {len(data):,} bytes"
+            text, is_binary, truncated, size = _read_preview(self.tools.resolve(relative))
+            if is_binary:
+                content = f"바이너리 파일이라 내용을 표시할 수 없습니다.\n\n파일 크기: {size:,} bytes"
             else:
-                content = data.decode("utf-8", errors="replace")
+                content = text
+                if truncated:
+                    content += f"\n\n[미리보기 제한: {MAX_PREVIEW_BYTES:,} bytes 중 앞부분만 표시]"
             self.active_file_relative = relative
             self.file_view.setPlainText(content)
             self.center_stack.setCurrentWidget(self.file_page)
@@ -1817,22 +1872,16 @@ class MainWindow(QMainWindow):
             self.open_file_button.setEnabled(True)
             self.open_file_button.setText(f"기본 앱에서 열기 · {path.name}")
             self._update_git_diff_button()
-            self.preview_title.setText(f"{path.name}  ·  {path.stat().st_size:,} bytes")
-            data = path.read_bytes()
-            if b"\x00" in data[:8192]:
+            text, is_binary, truncated, size = _read_preview(path)
+            self.preview_title.setText(f"{path.name}  ·  {size:,} bytes")
+            if is_binary:
                 self.preview.setPlainText(
                     f"바이너리 파일이라 텍스트 미리보기를 지원하지 않습니다.\n\n"
-                    f"파일 크기: {len(data):,} bytes"
+                    f"파일 크기: {size:,} bytes"
                 )
                 return
-            try:
-                text = data.decode("utf-8")
-                self.preview.setPlainText(text)
-            except UnicodeDecodeError:
-                text = data.decode("utf-8", errors="replace")
-                self.preview.setPlainText(
-                    "UTF-8이 아닌 문자 일부를 대체 표시했습니다.\n\n" + text
-                )
+            prefix = "[미리보기 제한: 앞부분만 표시]\n\n" if truncated else ""
+            self.preview.setPlainText(prefix + text)
         except (ValueError, FileNotFoundError, OSError) as exc:
             self.preview_path = None
             self.git_diff_button.setEnabled(False)
@@ -1873,7 +1922,7 @@ class MainWindow(QMainWindow):
         QTabBar#topTabs::tab { background:#111820; color:#8d9aa6; border:1px solid #202c37; border-top:2px solid transparent; border-bottom:1px solid #202c37; padding:0 4px 0 10px; margin:5px 3px 0 0; min-width:0; min-height:38px; }
         QTabBar#topTabs::tab:hover { background:#18242d; color:#e7f0f1; border-color:#344550; border-top-color:#5a8c83; }
         QTabBar#topTabs::tab:selected { background:#1a2932; color:#f2faf8; border-color:#315047; border-top-color:#75ddb2; border-bottom-color:#1a2932; }
-        QToolButton#simpleTabCloseButton { background:transparent; border:0; color:#82929e; font-size:15px; font-weight:400; padding:0; margin-left:4px; margin-right:2px; border-radius:4px; }
+        QToolButton#simpleTabCloseButton { background:transparent; border:0; color:#82929e; font-size:15px; font-weight:400; padding:0; margin-left:4px; margin-right:6px; border-radius:4px; }
         QToolButton#simpleTabCloseButton:hover { background:#30434d; color:#f4fffc; }
         QToolButton#simpleTabCloseButton:pressed { background:#3b5e60; color:#ffffff; }
         QPlainTextEdit#fileView { background:#0d1117; border:1px solid #293641; border-radius:4px; padding:16px; color:#d9e7e3; font-family:Consolas, 'Cascadia Code', monospace; font-size:13px; }
