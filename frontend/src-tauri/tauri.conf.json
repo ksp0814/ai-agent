@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": ["resources/personal-agent-bridge.exe"],
     "icon": [
       "icons/icon.ico",
       "icons/icon.png",

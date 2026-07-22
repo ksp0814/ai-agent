@@ -98,6 +98,20 @@ agent
 
 중앙 터미널은 Windows에서 PowerShell(`pwsh.exe`, 없으면 `powershell.exe`)로 시작합니다. Codex를 사용하려면 터미널에서 직접 `codex`를 입력해 실행합니다. 기존 PySide6 데스크톱 앱에서는 작업 공간별 터미널 세션을 유지하며, 상단에는 열린 세션과 파일 탭만 표시합니다.
 
+### Windows 배포
+
+GitHub Actions는 `v*` 태그를 기준으로 Python 브리지를 PyInstaller 실행 파일로 패키징한 뒤 Tauri MSI/NSIS 설치 파일을 GitHub Release 초안으로 생성합니다. 로컬에서 같은 브리지를 만들려면 다음을 실행합니다.
+
+```powershell
+python -m pip install -e ".[desktop,deployment]"
+python -m PyInstaller --onefile --name personal-agent-bridge --collect-all winpty --paths src --distpath frontend/src-tauri/resources --workpath .build/pyinstaller --specpath .build/pyinstaller --clean packaging/bridge_entry.py
+cd frontend
+npm ci
+npm run tauri build
+```
+
+배포된 앱 사용자는 Python을 설치할 필요가 없지만, Codex CLI 설치와 `codex login`은 필요합니다.
+
 ## OpenAI API 사용
 
 API 키와 모델을 환경변수로 설정하면 자연어 요청을 Responses API로 전달합니다.

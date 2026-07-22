@@ -41,7 +41,6 @@ export function TerminalPane({ sessionId, workspace }: Props) {
       if (payload.session_id !== terminalId) return
       if (payload.event === 'output' && payload.data) terminal.write(payload.data)
       if (payload.event === 'error' && payload.message) terminal.write(`\r\n\x1b[31m${payload.message}\x1b[0m\r\n`)
-      if (payload.event === 'exit') terminal.write('\r\n\x1b[90mCodex 세션이 종료되었습니다.\x1b[0m\r\n')
     })
     void eventSubscription.then((cleanup) => { if (stopped) cleanup(); else unlisten = cleanup })
 

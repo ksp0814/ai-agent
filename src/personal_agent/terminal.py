@@ -14,6 +14,8 @@ if platform.system() != "Windows":
     import fcntl
     import pty
     import termios
+else:
+    from winpty import PtyProcess
 
 def build_interactive_command(workspace: Path, model: Optional[str], reasoning_effort: Optional[str]):
     """Start a plain interactive shell; applications are launched by the user."""
@@ -53,10 +55,12 @@ def build_terminal_environment(workspace: Optional[Path] = None) -> dict[str, st
     """Return a Codex environment without host-agent control variables."""
     environment = os.environ.copy()
     for key in list(environment):
-        if key.startswith("ORCA_") or key in {
+        if key.startswith("ORCA_") or key.startswith("_PYI") or key in {
             "CODEX_PERMISSION_PROFILE",
             "CODEX_SANDBOX_NETWORK_DISABLED",
             "CODEX_THREAD_ID",
+            "PYTHONHOME",
+            "PYTHONPATH",
         }:
             environment.pop(key, None)
     codex_home = environment.get("CODEX_HOME")
@@ -83,7 +87,6 @@ class TerminalSession:
         if self.alive():
             self.stop()
         if platform.system() == "Windows":
-            from winpty import PtyProcess
             self.process = PtyProcess.spawn(
                 build_windows_command(self.command),
                 cwd=str(self.workspace),

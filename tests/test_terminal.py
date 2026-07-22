@@ -33,11 +33,15 @@ class TerminalResizeTests(unittest.TestCase):
             "CODEX_PERMISSION_PROFILE": ":workspace",
             "CODEX_THREAD_ID": "thread",
             "CODEX_HOME": "C:/codex-home",
+            "PYTHONPATH": "C:/python-path",
+            "_PYI_APPLICATION_HOME_DIR": "C:/pyinstaller",
         }, clear=False):
             environment = build_terminal_environment()
         self.assertNotIn("ORCA_AGENT_HOOK_ENDPOINT", environment)
         self.assertNotIn("CODEX_PERMISSION_PROFILE", environment)
         self.assertNotIn("CODEX_THREAD_ID", environment)
+        self.assertNotIn("PYTHONPATH", environment)
+        self.assertNotIn("_PYI_APPLICATION_HOME_DIR", environment)
         self.assertEqual(environment["CODEX_HOME"], "C:/codex-home")
 
     @patch("personal_agent.terminal._is_writable_directory", return_value=False)

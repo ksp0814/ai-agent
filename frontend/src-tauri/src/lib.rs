@@ -8,7 +8,7 @@ mod commands {
 
     use serde::Serialize;
     use serde_json::Value;
-    use tauri::{AppHandle, Emitter, State};
+    use tauri::{AppHandle, Emitter, Manager, State};
 
     pub struct TerminalState(pub Mutex<HashMap<String, ManagedTerminal>>);
 
@@ -58,7 +58,7 @@ mod commands {
     }
 
     #[tauri::command]
-    pub fn bridge_request(workspace: String, request: Value) -> Result<Value, String> {
+    pub fn bridge_request(app: AppHandle, workspace: String, request: Value) -> Result<Value, String> {
         let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
@@ -67,16 +67,19 @@ mod commands {
         let python_path = project_root.join("src");
         let request_json = serde_json::to_string(&request)
             .map_err(|error| format!("요청을 직렬화하지 못했습니다: {error}"))?;
-        let output = Command::new(python_executable(&project_root))
+        let mut command = if let Some(bridge) = bundled_bridge_path(&app) {
+            let mut command = Command::new(bridge);
+            command.args([workspace.as_str(), "--request", request_json.as_str()]);
+            command
+        } else {
+            let mut command = Command::new(python_executable(&project_root));
+            command
+                .env("PYTHONPATH", &python_path)
+                .args(["-m", "personal_agent.bridge", workspace.as_str(), "--request", request_json.as_str()]);
+            command
+        };
+        let output = command
             .current_dir(&project_root)
-            .env("PYTHONPATH", &python_path)
-            .args([
-                "-m",
-                "personal_agent.bridge",
-                workspace.as_str(),
-                "--request",
-                request_json.as_str(),
-            ])
             .output()
             .map_err(|error| format!("Python 브리지를 시작하지 못했습니다: {error}"))?;
         if !output.status.success() {
@@ -111,6 +114,19 @@ mod commands {
         }
     }
 
+    fn bundled_bridge_path(app: &AppHandle) -> Option<PathBuf> {
+        let executable = if cfg!(windows) {
+            "personal-agent-bridge.exe"
+        } else {
+            "personal-agent-bridge"
+        };
+        let candidates = [
+            app.path().resource_dir().ok().map(|path| path.join(executable)),
+            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join(executable)),
+        ];
+        candidates.into_iter().flatten().find(|path| path.is_file())
+    }
+
     fn write_control(stdin: &mut ChildStdin, payload: Value) -> Result<(), String> {
         writeln!(stdin, "{payload}").map_err(|error| format!("터미널 명령을 전달하지 못했습니다: {error}"))?;
         stdin.flush().map_err(|error| format!("터미널 명령을 flush하지 못했습니다: {error}"))
@@ -124,10 +140,19 @@ mod commands {
         workspace: String,
     ) -> Result<(), String> {
         let root = project_root()?;
-        let mut child = Command::new(python_executable(&root))
+        let mut command = if let Some(bridge) = bundled_bridge_path(&app) {
+            let mut command = Command::new(bridge);
+            command.args(["--terminal", workspace.as_str()]);
+            command
+        } else {
+            let mut command = Command::new(python_executable(&root));
+            command
+                .env("PYTHONPATH", root.join("src"))
+                .args(["-m", "personal_agent.terminal_bridge", workspace.as_str()]);
+            command
+        };
+        let mut child = command
             .current_dir(&root)
-            .env("PYTHONPATH", root.join("src"))
-            .args(["-m", "personal_agent.terminal_bridge", workspace.as_str()])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
