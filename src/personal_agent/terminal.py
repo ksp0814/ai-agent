@@ -77,7 +77,8 @@ class TerminalSession:
             return "".join(chunks)
         if self.master_fd is None:
             return ""
-        ready, _, _ = select.select([self.master_fd], [], [], 0.05)
+        # Poll loop already runs every 50 ms. Never block Qt while waiting for PTY output.
+        ready, _, _ = select.select([self.master_fd], [], [], 0)
         if not ready:
             return ""
         chunks = []

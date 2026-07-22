@@ -38,6 +38,15 @@ class TerminalResizeTests(unittest.TestCase):
 
         self.assertEqual(session.process.calls, [(140, 45)])
 
+    @patch("personal_agent.terminal.platform.system", return_value="Linux")
+    @patch("personal_agent.terminal.select.select", return_value=([], [], []))
+    def test_read_does_not_block_polling_loop(self, _select, _system):
+        session = TerminalSession(Path("/workspace"))
+        session.master_fd = 123
+
+        self.assertEqual(session.read(), "")
+        self.assertEqual(_select.call_args.args, ([123], [], [], 0))
+
 
 if __name__ == "__main__":
     unittest.main()

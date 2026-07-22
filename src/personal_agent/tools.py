@@ -53,6 +53,30 @@ class WorkspaceTools:
                 break
         return files[:file_limit], directories[:directory_limit]
 
+    def scan_tree_snapshot(
+        self, file_limit: int = 100_000, directory_limit: int = 10_000
+    ) -> tuple[list[str], list[str], dict[str, tuple[int, int]]]:
+        """Scan tree and collect stat data in the worker that owns the filesystem walk."""
+        files, directories, metadata = [], [], {}
+        for current, dir_names, file_names in os.walk(self.root):
+            dir_names[:] = sorted(name for name in dir_names if name not in IGNORED_DIRECTORIES)
+            relative_dir = Path(current).relative_to(self.root)
+            if relative_dir != Path(".") and len(directories) < directory_limit:
+                directories.append(str(relative_dir))
+            for name in sorted(file_names, key=str.casefold):
+                if len(files) >= file_limit:
+                    break
+                relative = str(relative_dir / name)
+                files.append(relative)
+                try:
+                    stat = (Path(current) / name).stat()
+                except OSError:
+                    continue
+                metadata[relative] = (stat.st_mtime_ns, stat.st_size)
+            if len(files) >= file_limit and len(directories) >= directory_limit:
+                break
+        return files[:file_limit], directories[:directory_limit], metadata
+
     def read_file(self, relative: str) -> str:
         path = self.resolve(relative)
         if not path.is_file():

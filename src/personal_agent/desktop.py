@@ -242,7 +242,7 @@ class FileScanWorker(QThread):
 
 
 class FileChangeWorker(QThread):
-    scanned = Signal(object, object, str)
+    scanned = Signal(object, object, object, str)
     failed = Signal(str)
 
     def __init__(self, workspace: Path):
@@ -251,8 +251,8 @@ class FileChangeWorker(QThread):
 
     def run(self) -> None:
         try:
-            files, directories = WorkspaceTools(self.workspace).scan_tree(file_limit=100_000, directory_limit=10_000)
-            self.scanned.emit(files, directories, str(self.workspace))
+            files, directories, metadata = WorkspaceTools(self.workspace).scan_tree_snapshot(file_limit=100_000, directory_limit=10_000)
+            self.scanned.emit(files, directories, metadata, str(self.workspace))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -451,7 +451,9 @@ class MainWindow(QMainWindow):
         self.clear_terminal_button = QPushButton("지우기"); self.clear_terminal_button.setObjectName("compactButton"); self.clear_terminal_button.setFixedSize(68, 34); self.clear_terminal_button.setToolTip("현재 터미널 화면을 지웁니다."); self.clear_terminal_button.clicked.connect(self._clear_terminal); center_header_layout.addWidget(self.clear_terminal_button)
         self.decrease_font_button = QPushButton("A−"); self.decrease_font_button.setObjectName("iconButton"); self.decrease_font_button.setAccessibleName("터미널 글자 작게"); self.decrease_font_button.setFixedSize(38, 38); self.decrease_font_button.setToolTip("터미널 글자를 작게 합니다."); self.decrease_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(-1)); center_header_layout.addWidget(self.decrease_font_button)
         self.increase_font_button = QPushButton("A+"); self.increase_font_button.setObjectName("iconButton"); self.increase_font_button.setAccessibleName("터미널 글자 크게"); self.increase_font_button.setFixedSize(38, 38); self.increase_font_button.setToolTip("터미널 글자를 크게 합니다."); self.increase_font_button.clicked.connect(lambda: self._adjust_terminal_font_size(1)); center_header_layout.addWidget(self.increase_font_button)
-        center_layout.addWidget(center_header)
+        # Workspace/project context already lives in the left sidebar.
+        # Keep legacy terminal controls alive for keyboard/API paths, but remove the redundant row.
+        center_header.hide()
         session_header = QWidget(); session_header.setObjectName("tabHeader"); session_header.setMinimumHeight(44); session_header_layout = QHBoxLayout(session_header); session_header_layout.setContentsMargins(0, 0, 0, 0); session_header_layout.setSpacing(0)
         self.top_tabs = AdaptiveTabBar(); self.top_tabs.setObjectName("topTabs"); self.top_tabs.setAccessibleName("열린 세션 및 파일 탭"); self.top_tabs.setMinimumHeight(44); self.top_tabs.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred); self.top_tabs.setDocumentMode(True); self.top_tabs.setDrawBase(False); self.top_tabs.setExpanding(False); self.top_tabs.setMovable(False); self.top_tabs.setTabsClosable(True); self.top_tabs.setUsesScrollButtons(True); self.top_tabs.setElideMode(Qt.TextElideMode.ElideRight); self.top_tabs.currentChanged.connect(self._select_top_tab); self.top_tabs.tabBarClicked.connect(self._top_tab_clicked); self.top_tabs.tabCloseRequested.connect(self._close_top_tab); session_header_layout.addWidget(self.top_tabs)
         self.session_tabs = self.top_tabs
@@ -459,7 +461,6 @@ class MainWindow(QMainWindow):
         session_header_layout.addStretch(1)
         self.file_view_back_button = QPushButton("← 터미널"); self.file_view_back_button.setObjectName("compactButton"); self.file_view_back_button.clicked.connect(self._show_terminal_view); self.file_view_back_button.hide()
         self.new_session_button = QPushButton("＋"); self.new_session_button.setObjectName("iconButton"); self.new_session_button.setAccessibleName("새 Codex 세션"); self.new_session_button.setFixedSize(40, 40); self.new_session_button.setToolTip("현재 작업 공간에 새 Codex 세션을 만듭니다."); self.new_session_button.clicked.connect(self._new_session); session_header_layout.addWidget(self.new_session_button)
-        self.split_terminal_button = QPushButton("⧉"); self.split_terminal_button.setObjectName("iconButton"); self.split_terminal_button.setAccessibleName("터미널 분할"); self.split_terminal_button.setFixedSize(40, 40); self.split_terminal_button.setToolTip("현재 작업 공간에 독립 Codex 터미널을 하나 더 엽니다."); self.split_terminal_button.clicked.connect(self._toggle_terminal_split); session_header_layout.addWidget(self.split_terminal_button)
         self.rename_session_button = QPushButton("이름"); self.rename_session_button.setObjectName("compactButton"); self.rename_session_button.setFixedSize(60, 40); self.rename_session_button.clicked.connect(self._rename_session); session_header_layout.addWidget(self.rename_session_button)
         self.close_session_button = QPushButton("×"); self.close_session_button.setObjectName("dangerIconButton"); self.close_session_button.setFixedSize(40, 40); self.close_session_button.setToolTip("현재 세션을 닫습니다."); self.close_session_button.clicked.connect(self._close_session); session_header_layout.addWidget(self.close_session_button)
         self.rename_session_button.hide()
@@ -1342,7 +1343,7 @@ class MainWindow(QMainWindow):
             self.change_scan_worker.deleteLater()
             self.change_scan_worker = None
 
-    def _file_changes_scanned(self, files, directories, workspace: str) -> None:
+    def _file_changes_scanned(self, files, directories, metadata, workspace: str) -> None:
         if workspace != str(self.workspace):
             return
         baseline = self.file_baselines.get(workspace)
@@ -1353,12 +1354,10 @@ class MainWindow(QMainWindow):
         baseline_files = set(baseline)
         changed = (current_files - baseline_files) | (baseline_files - current_files)
         for relative in current_files & baseline_files:
-            path = self.workspace / relative
-            try:
-                stat = path.stat()
-                if stat.st_mtime_ns != baseline[relative].mtime_ns or stat.st_size != baseline[relative].size:
-                    changed.add(relative)
-            except OSError:
+            current_metadata = metadata.get(relative)
+            if current_metadata is None:
+                changed.add(relative)
+            elif current_metadata != (baseline[relative].mtime_ns, baseline[relative].size):
                 changed.add(relative)
         structural_change = files != self.all_files or directories != self.all_directories
         previous_changed = self.changed_files
@@ -1371,13 +1370,11 @@ class MainWindow(QMainWindow):
             self.all_directories = directories
             self._filter_files(self.file_search.text())
         if changed:
-            self.statusBar().showMessage(f"변경된 파일 {len(changed):,}개 · 미리보기에서 확인하세요")
+            self.statusBar().showMessage(f"변경된 파일 {len(changed):,}개 · 파일을 두 번 클릭해 확인하세요")
         elif structural_change:
             self.statusBar().showMessage(f"파일 목록 갱신 · 파일 {len(files):,}개 · 폴더 {len(directories):,}개")
         if changed == previous_changed:
             return
-        if self.preview_relative in changed:
-            self._preview_file_by_path(self.preview_relative)
 
     def _preview_file_by_path(self, relative: str) -> None:
         if relative not in self.changed_files:

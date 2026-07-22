@@ -34,6 +34,18 @@ class WorkspaceToolsTests(unittest.TestCase):
             self.assertEqual(files, [str(Path("src") / "main.py")])
             self.assertEqual(directories, [str(Path("src"))])
 
+    def test_scan_tree_snapshot_returns_file_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            note = root / "note.txt"
+            note.write_text("hello\n", encoding="utf-8")
+
+            files, directories, metadata = WorkspaceTools(root).scan_tree_snapshot()
+
+            self.assertEqual(files, ["note.txt"])
+            self.assertEqual(directories, [])
+            self.assertEqual(metadata["note.txt"], (note.stat().st_mtime_ns, note.stat().st_size))
+
     def test_git_worktree_create(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
