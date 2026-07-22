@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 import select
 import signal
 import struct
@@ -15,18 +16,63 @@ if platform.system() != "Windows":
     import termios
 
 def build_interactive_command(workspace: Path, model: Optional[str], reasoning_effort: Optional[str]):
-    command = ["codex", "--no-alt-screen", "-C", str(workspace)]
-    if model:
-        command.extend(["-m", model])
-    if reasoning_effort:
-        command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
-    return command
+    """Start a plain interactive shell; applications are launched by the user."""
+    if platform.system() == "Windows":
+        powershell = shutil.which("pwsh.exe") or shutil.which("powershell.exe") or "powershell.exe"
+        return [powershell, "-NoLogo", "-NoExit"]
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    return [shell, "-i"]
+
+
+def build_windows_command(command: list[str]) -> list[str]:
+    """Run the PTY child through a UTF-8 Windows console code page."""
+    if command and Path(command[0]).name.lower() in {"cmd.exe", "cmd"}:
+        return [command[0], "/d", "/k", "chcp 65001>nul"]
+    if command and Path(command[0]).name.lower() in {"pwsh.exe", "pwsh", "powershell.exe", "powershell"}:
+        return [
+            *command,
+            "-Command",
+            "[Console]::InputEncoding = [Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
+        ]
+    command_line = subprocess.list2cmdline(command)
+    return ["cmd.exe", "/d", "/s", "/c", f"chcp 65001>nul && {command_line}"]
+
+
+def _is_writable_directory(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".personal-agent-write-test-{os.getpid()}"
+        probe.touch()
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def build_terminal_environment(workspace: Optional[Path] = None) -> dict[str, str]:
+    """Return a Codex environment without host-agent control variables."""
+    environment = os.environ.copy()
+    for key in list(environment):
+        if key.startswith("ORCA_") or key in {
+            "CODEX_PERMISSION_PROFILE",
+            "CODEX_SANDBOX_NETWORK_DISABLED",
+            "CODEX_THREAD_ID",
+        }:
+            environment.pop(key, None)
+    codex_home = environment.get("CODEX_HOME")
+    if workspace is not None and codex_home and not _is_writable_directory(Path(codex_home)):
+        fallback_home = workspace / ".agent" / "codex-home"
+        if workspace.exists():
+            fallback_home.mkdir(parents=True, exist_ok=True)
+        environment["CODEX_HOME"] = str(fallback_home)
+    return environment
 
 
 class TerminalSession:
     def __init__(self, workspace: Path, model: Optional[str] = None, reasoning_effort: Optional[str] = None):
         self.workspace = workspace
         self.command = build_interactive_command(workspace, model, reasoning_effort)
+        self.environment = build_terminal_environment(self.workspace)
         self.process = None
         self.master_fd = None
         self._output_queue = queue.Queue()
@@ -38,7 +84,12 @@ class TerminalSession:
             self.stop()
         if platform.system() == "Windows":
             from winpty import PtyProcess
-            self.process = PtyProcess.spawn(self.command, cwd=str(self.workspace), dimensions=(45, 140))
+            self.process = PtyProcess.spawn(
+                build_windows_command(self.command),
+                cwd=str(self.workspace),
+                dimensions=(45, 140),
+                env=self.environment,
+            )
             self._reader_stop.clear()
             self._reader_thread = threading.Thread(target=self._read_windows_output, daemon=True)
             self._reader_thread.start()
@@ -46,7 +97,15 @@ class TerminalSession:
         self.master_fd, slave_fd = pty.openpty()
         try:
             self.resize(140, 45)
-            self.process = subprocess.Popen(self.command, cwd=self.workspace, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, start_new_session=True)
+            self.process = subprocess.Popen(
+                self.command,
+                cwd=self.workspace,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+                env=self.environment,
+            )
         finally:
             os.close(slave_fd)
 

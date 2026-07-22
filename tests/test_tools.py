@@ -95,6 +95,18 @@ class WorkspaceToolsTests(unittest.TestCase):
             self.assertEqual(snapshot["entries"]["note.txt"], "??")
             self.assertIn("note.txt", tools.git_diff_file("note.txt"))
 
+    def test_git_snapshot_lists_untracked_files_not_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "new-folder").mkdir()
+            (root / "new-folder" / "note.txt").write_text("hello\n", encoding="utf-8")
+
+            snapshot = WorkspaceTools(root).git_snapshot()
+
+            self.assertNotIn("new-folder", snapshot["entries"])
+            self.assertEqual(snapshot["entries"]["new-folder/note.txt"], "??")
+
 
 if __name__ == "__main__":
     unittest.main()

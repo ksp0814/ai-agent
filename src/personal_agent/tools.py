@@ -14,6 +14,8 @@ IGNORED_DIRECTORIES = {
     "__pycache__",
     ".pytest_cache",
     "node_modules",
+    "target",
+    "dist",
 }
 
 
@@ -102,7 +104,7 @@ class WorkspaceTools:
         """Return read-only branch and porcelain status information."""
         try:
             status_result = subprocess.run(
-                ["git", "status", "--porcelain=v1", "-b", "--untracked-files=normal"],
+                ["git", "status", "--porcelain=v1", "-b", "--untracked-files=all"],
                 cwd=self.root,
                 text=True,
                 capture_output=True,
@@ -126,6 +128,8 @@ class WorkspaceTools:
             relative = line[3:]
             if " -> " in relative:
                 relative = relative.rsplit(" -> ", 1)[-1]
+            if (self.root / relative).is_dir():
+                continue
             entries[relative] = code
         return {"available": True, "message": "", "branch": branch, "entries": entries}
 

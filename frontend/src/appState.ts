@@ -1,0 +1,73 @@
+export type Workspace = {
+  id: string
+  name: string
+  path: string
+  branch: string
+  changedFiles: number
+}
+
+export type FileEntry = {
+  name: string
+  kind: 'file' | 'folder'
+  children?: FileEntry[]
+}
+
+export const demoWorkspace: Workspace = {
+  id: 'personal-agent',
+  name: 'personal-agent',
+  path: 'C:/Users/Lenovo/Desktop/ai-agent',
+  branch: 'dev',
+  changedFiles: 1,
+}
+
+export const demoFiles: FileEntry[] = [
+  { name: 'src', kind: 'folder', children: [
+    { name: 'personal_agent', kind: 'folder', children: [
+      { name: 'desktop.py', kind: 'file' },
+      { name: 'terminal.py', kind: 'file' },
+      { name: 'tools.py', kind: 'file' },
+    ] },
+  ] },
+  { name: 'tests', kind: 'folder', children: [{ name: 'test_tools.py', kind: 'file' }] },
+  { name: 'README.md', kind: 'file' },
+  { name: 'pyproject.toml', kind: 'file' },
+]
+
+export function filterFiles(entries: FileEntry[], query: string): FileEntry[] {
+  const normalized = query.trim().toLocaleLowerCase()
+  if (!normalized) return entries
+
+  return entries.flatMap((entry) => {
+    const children = entry.children ? filterFiles(entry.children, normalized) : []
+    if (entry.name.toLocaleLowerCase().includes(normalized) || children.length > 0) {
+      return [{ ...entry, ...(children.length > 0 ? { children } : {}) }]
+    }
+    return []
+  })
+}
+
+export function buildFileTree(files: string[], directories: string[]): FileEntry[] {
+  const root: FileEntry[] = []
+  const add = (path: string, kind: FileEntry['kind']) => {
+    const parts = path.replaceAll('\\', '/').split('/').filter(Boolean)
+    let current = root
+    parts.forEach((part, index) => {
+      let entry = current.find((candidate) => candidate.name === part)
+      const isLeaf = index === parts.length - 1
+      if (!entry) {
+        entry = { name: part, kind: isLeaf ? kind : 'folder', ...(isLeaf || kind === 'file' ? {} : { children: [] }) }
+        current.push(entry)
+      }
+      if (!isLeaf) {
+        entry.kind = 'folder'
+        entry.children ??= []
+        current = entry.children
+      }
+    })
+  }
+
+  directories.forEach((directory) => add(directory, 'folder'))
+  files.forEach((file) => add(file, 'file'))
+  const sort = (entries: FileEntry[]): FileEntry[] => entries.sort((a, b) => Number(a.kind === 'file') - Number(b.kind === 'file') || a.name.localeCompare(b.name)).map((entry) => ({ ...entry, ...(entry.children ? { children: sort(entry.children) } : {}) }))
+  return sort(root)
+}

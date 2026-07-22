@@ -6,7 +6,7 @@ from typing import Any, Dict
 from uuid import uuid4
 
 
-def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex") -> Dict[str, Any]:
+def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex", environment: Dict[str, str] | None = None) -> Dict[str, Any]:
     resolved = shutil.which(executable) or executable
     command = [resolved, "app-server", "--listen", "stdio://"]
     if platform.system() == "Windows" and resolved.lower().endswith((".cmd", ".bat")):
@@ -20,6 +20,7 @@ def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex") 
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        env=environment,
     )
     requests = [
         {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "personal-agent", "title": "Personal Agent", "version": "0.1.0"}, "capabilities": {}}},
@@ -45,15 +46,15 @@ def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex") 
             process.wait(timeout=5)
 
 
-def fetch_codex_rate_limits(executable: str = "codex") -> Dict[str, Any]:
+def fetch_codex_rate_limits(executable: str = "codex", environment: Dict[str, str] | None = None) -> Dict[str, Any]:
     """Read current Codex account rate-limit windows."""
-    return _call_codex("account/rateLimits/read", {}, executable)
+    return _call_codex("account/rateLimits/read", {}, executable, environment)
 
 
-def consume_codex_reset_credit(credit_id: str = "", executable: str = "codex") -> str:
+def consume_codex_reset_credit(credit_id: str = "", executable: str = "codex", environment: Dict[str, str] | None = None) -> str:
     """Consume one earned Codex rate-limit reset credit."""
     params = {"idempotencyKey": str(uuid4())}
     if credit_id:
         params["creditId"] = credit_id
-    result = _call_codex("account/rateLimitResetCredit/consume", params, executable)
+    result = _call_codex("account/rateLimitResetCredit/consume", params, executable, environment)
     return result.get("outcome", "unknown")
