@@ -31,7 +31,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Python deployment dependencies
-        run: python -m pip install -e ".[desktop,deployment]"
+        run: python -m pip install -e ".[terminal,deployment]"
 
       - name: Set Tauri version from release tag
         if: startsWith(github.ref, 'refs/tags/v')

@@ -2,7 +2,7 @@
 
 로컬 작업 공간에서 파일을 확인하고 Codex CLI 세션으로 코딩 작업을 수행하는 개인용 AI 코딩 워크벤치입니다. CLI와 데스크톱 앱을 제공합니다.
 
-데스크톱 UI는 React + TypeScript + Tauri로 전환 중입니다. 기존 PySide6 앱은 Python 기능을 안정적으로 유지하기 위한 호환 실행 경로로 남겨두었습니다.
+데스크톱 UI는 React + TypeScript + Tauri로 제공합니다. Python은 파일·Git·사용량·PTY/ConPTY를 담당하는 로컬 브리지로 실행됩니다.
 
 ## 주요 특징
 
@@ -28,8 +28,8 @@
 ## 요구 사항
 
 - Python 3.9 이상
-- 기존 데스크톱 앱: PySide6
-- 새 데스크톱 UI: Node.js, Rust, Cargo
+- 데스크톱 UI: Node.js, Rust, Cargo
+- 터미널 브리지 개발 환경(Windows): `pywinpty`
 - Codex CLI 로그인 사용 시 Codex CLI 설치 및 로그인
 - Git 기능 사용 시 Git 설치
 
@@ -52,20 +52,6 @@ python -m venv .venv
 python -m pip install -e .
 agent
 ```
-
-### 데스크톱 앱
-
-```bash
-python -m pip install -e ".[desktop]"
-agent-desktop
-```
-
-가상환경을 활성화하지 않고 실행하려면 프로젝트 루트의 런처를 사용할 수 있습니다.
-
-- Windows: `run-agent-desktop.cmd` 또는 `run-agent-desktop.vbs`
-- macOS: `run-agent-desktop.command`
-
-Windows 시작 오류 로그는 `%USERPROFILE%\.personal-agent\desktop-startup.log`에서 확인할 수 있습니다.
 
 ### React + Tauri 데스크톱 앱
 
@@ -97,14 +83,14 @@ codex login
 agent
 ```
 
-중앙 터미널은 Windows에서 PowerShell(`pwsh.exe`, 없으면 `powershell.exe`)로 시작합니다. Codex를 사용하려면 터미널에서 직접 `codex`를 입력해 실행합니다. 기존 PySide6 데스크톱 앱에서는 작업 공간별 터미널 세션을 유지하며, 상단에는 열린 세션과 파일 탭만 표시합니다.
+중앙 터미널은 Windows에서 PowerShell(`pwsh.exe`, 없으면 `powershell.exe`)로 시작합니다. Codex를 사용하려면 터미널에서 직접 `codex`를 입력해 실행합니다. 작업 공간별 터미널 세션을 유지하며, 상단에는 열린 세션과 파일 탭만 표시합니다.
 
 ### Windows 배포
 
 GitHub Actions는 `v*` 태그를 기준으로 Python 브리지를 PyInstaller 실행 파일로 패키징한 뒤 Tauri MSI/NSIS 설치 파일을 GitHub Release 초안으로 생성합니다. 로컬에서 같은 브리지를 만들려면 다음을 실행합니다.
 
 ```powershell
-python -m pip install -e ".[desktop,deployment]"
+  python -m pip install -e ".[terminal,deployment]"
 python -m PyInstaller --onefile --name personal-agent-bridge --collect-all winpty --paths src --distpath frontend/src-tauri/resources --workpath .build/pyinstaller --specpath .build/pyinstaller --clean packaging/bridge_entry.py
 cd frontend
 npm ci
@@ -154,9 +140,9 @@ frontend/src/App.tsx            React 워크벤치 UI
 frontend/src/bridge.ts          Tauri·Python 브리지 호출
 frontend/src/TerminalPane.tsx   xterm.js 터미널 렌더링·입출력
 frontend/src-tauri/src/lib.rs   Tauri 명령 경계
-src/personal_agent/desktop.py   기존 PySide6 데스크톱 UI
 src/personal_agent/terminal.py  PTY·ConPTY 터미널 세션
 src/personal_agent/bridge.py    React/Tauri용 JSON-line 백엔드 브리지
+src/personal_agent/terminal_bridge.py  Tauri용 터미널 프로세스 브리지
 src/personal_agent/cli.py       CLI 진입점과 명령 처리
 src/personal_agent/tools.py     작업 공간·Git 파일 도구
 tests/                          단위 테스트
@@ -166,7 +152,7 @@ tests/                          단위 테스트
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -q
-PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c "import personal_agent.desktop"
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c "import personal_agent.bridge, personal_agent.terminal_bridge"
 git diff --check
 ```
 

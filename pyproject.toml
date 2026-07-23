@@ -10,12 +10,11 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]
-desktop = ["PySide6>=6.6,<6.11", "pywinpty>=2.0; platform_system == 'Windows'"]
+terminal = ["pywinpty>=2.0; platform_system == 'Windows'"]
 deployment = ["pyinstaller>=6.10,<7"]
 
 [project.scripts]
 agent = "personal_agent.cli:main"
-agent-desktop = "personal_agent.desktop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

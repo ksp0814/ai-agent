@@ -14,7 +14,7 @@ export type FileEntry = {
 export const demoFiles: FileEntry[] = [
   { name: 'src', kind: 'folder', children: [
     { name: 'personal_agent', kind: 'folder', children: [
-      { name: 'desktop.py', kind: 'file' },
+      { name: 'bridge.py', kind: 'file' },
       { name: 'terminal.py', kind: 'file' },
       { name: 'tools.py', kind: 'file' },
     ] },
