@@ -31,6 +31,19 @@ jobs:
       - name: Install Python deployment dependencies
         run: python -m pip install -e ".[desktop,deployment]"
 
+      - name: Set Tauri version from release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".Substring(1)
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tag must use the vMAJOR.MINOR.PATCH format."
+          }
+          $configPath = "frontend/src-tauri/tauri.conf.json"
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json
+          $config.version = $version
+          $config | ConvertTo-Json -Depth 20 | Set-Content $configPath -Encoding utf8
+
       - name: Build bundled Python bridge
         run: >-
           python -m PyInstaller --onefile --name personal-agent-bridge
