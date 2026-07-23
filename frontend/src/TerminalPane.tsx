@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { listen } from '@tauri-apps/api/event'
@@ -10,7 +10,7 @@ type Props = {
   workspace: string
 }
 
-export function TerminalPane({ sessionId, workspace }: Props) {
+export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalId = `${workspace}::${sessionId}`
 
@@ -87,4 +87,4 @@ export function TerminalPane({ sessionId, workspace }: Props) {
   }, [sessionId, workspace])
 
   return <div ref={containerRef} className="terminal-xterm" aria-label="Codex 터미널" />
-}
+})

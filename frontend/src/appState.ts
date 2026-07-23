@@ -3,21 +3,12 @@ export type Workspace = {
   name: string
   path: string
   branch: string
-  changedFiles: number
 }
 
 export type FileEntry = {
   name: string
   kind: 'file' | 'folder'
   children?: FileEntry[]
-}
-
-export const demoWorkspace: Workspace = {
-  id: 'personal-agent',
-  name: 'personal-agent',
-  path: 'C:/Users/Lenovo/Desktop/ai-agent',
-  branch: 'dev',
-  changedFiles: 1,
 }
 
 export const demoFiles: FileEntry[] = [

@@ -92,6 +92,19 @@ button { border: 0; color: inherit; cursor: pointer; }
 .file-view-shell::-webkit-scrollbar-track { background: #111714; }
 .file-view-shell::-webkit-scrollbar-thumb { border: 2px solid #111714; border-radius: 8px; background: #3b5145; }
 .file-view-shell::-webkit-scrollbar-thumb:hover { background: #547562; }
+.diff-shell { padding: 8px 0; }
+.diff-view { min-width: max-content; font: 12px/1.65 "Cascadia Code", Consolas, monospace; }
+.diff-line { display: flex; min-height: 20px; padding-right: 18px; white-space: pre; }
+.diff-line-number { flex: 0 0 42px; padding-right: 10px; color: #526158; text-align: right; user-select: none; }
+.diff-line code { color: #b9c7bf; font: inherit; }
+.diff-added { background: #123524; }
+.diff-added code { color: #9be5b9; }
+.diff-removed { background: #3b2025; }
+.diff-removed code { color: #f0a9ae; }
+.diff-header { background: #17231f; }
+.diff-header code { color: #a7cdb7; }
+.diff-hunk { margin: 4px 0; background: #1b2635; }
+.diff-hunk code { color: #9ec8ee; }
 .file-content { width: max-content; min-width: 100%; min-height: 100%; margin: 0; padding: 16px 18px; color: #d7e3db; font: 13px/1.65 "Cascadia Code", "SFMono-Regular", Consolas, monospace; white-space: pre; tab-size: 4; }
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -120,7 +133,11 @@ button { border: 0; color: inherit; cursor: pointer; }
 .search-field:focus-within { border-color: #4d8066; }
 .search-field input { width: 100%; border: 0; outline: 0; background: transparent; color: #e0e7e3; font-size: 11px; }
 .search-field input::placeholder { color: #69766f; }
-.file-tree { min-height: 0; flex: 1 1 auto; overflow: auto; }
+.file-tree { min-height: 0; flex: 1 1 auto; overflow: auto; scrollbar-color: #3b5145 #111714; scrollbar-width: thin; }
+.file-tree::-webkit-scrollbar { width: 10px; height: 10px; }
+.file-tree::-webkit-scrollbar-track { background: #111714; }
+.file-tree::-webkit-scrollbar-thumb { border: 2px solid #111714; border-radius: 8px; background: #3b5145; }
+.file-tree::-webkit-scrollbar-thumb:hover { background: #547562; }
 .tree-row { display: flex; width: 100%; align-items: center; gap: 7px; padding-top: 6px; padding-bottom: 6px; background: transparent; color: #a7b1ac; font-size: 12px; text-align: left; }
 .tree-row:hover { background: #18201c; color: #d7e9de; }
 .tree-row svg { flex: 0 0 auto; color: #7b9385; }

@@ -49,20 +49,6 @@ mod commands {
         }
     }
 
-    #[derive(Debug, Serialize)]
-    pub struct BackendStatus {
-        pub status: &'static str,
-        pub transport: &'static str,
-    }
-
-    #[tauri::command]
-    pub fn backend_status() -> BackendStatus {
-        BackendStatus {
-            status: "ready",
-            transport: "tauri-command-boundary",
-        }
-    }
-
     #[tauri::command]
     pub fn bridge_request(app: AppHandle, workspace: String, request: Value) -> Result<Value, String> {
         let request_json = serde_json::to_string(&request)
@@ -238,7 +224,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::TerminalState::default())
         .invoke_handler(tauri::generate_handler![
-            commands::backend_status,
             commands::bridge_request,
             commands::start_terminal,
             commands::write_terminal,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
   ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen, FolderPlus, GitBranch, Menu,
@@ -11,7 +11,7 @@ import { TerminalPane } from './TerminalPane'
 import './styles.css'
 
 type Tab = { id: string; label: string; kind: 'session' | 'file' }
-type OpenFile = { path: string; content?: string; loading: boolean; error?: string }
+type OpenFile = { path: string; content?: string; loading: boolean; error?: string; kind?: 'file' | 'diff' }
 
 function loadWorkspaces(): Workspace[] {
   try {
@@ -26,7 +26,7 @@ function loadWorkspaces(): Workspace[] {
   return []
 }
 
-function FileTree({ entries, depth = 0, basePath = '', onOpen }: { entries: FileEntry[]; depth?: number; basePath?: string; onOpen: (entry: FileEntry, path: string) => void }) {
+const FileTree = memo(function FileTree({ entries, depth = 0, basePath = '', onOpen }: { entries: FileEntry[]; depth?: number; basePath?: string; onOpen: (path: string) => void }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ src: true, personal_agent: true })
   return <div className="file-tree">
     {entries.map((entry) => {
@@ -34,7 +34,7 @@ function FileTree({ entries, depth = 0, basePath = '', onOpen }: { entries: File
       const hasChildren = Boolean(entry.children?.length)
       const isExpanded = expanded[path] ?? false
       return <div key={path}>
-        <button className="tree-row" style={{ paddingLeft: `${12 + depth * 16}px` }} onClick={() => hasChildren ? setExpanded((current) => ({ ...current, [path]: !isExpanded })) : onOpen(entry, path)} aria-expanded={hasChildren ? isExpanded : undefined}>
+        <button className="tree-row" style={{ paddingLeft: `${12 + depth * 16}px` }} onClick={() => hasChildren ? setExpanded((current) => ({ ...current, [path]: !isExpanded })) : onOpen(path)} aria-expanded={hasChildren ? isExpanded : undefined}>
           {hasChildren ? (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span className="tree-spacer" />}
           {entry.kind === 'folder' ? (isExpanded ? <FolderOpen size={15} /> : <Folder size={15} />) : <FileCode2 size={15} />}
           <span>{entry.name}</span>
@@ -43,12 +43,19 @@ function FileTree({ entries, depth = 0, basePath = '', onOpen }: { entries: File
       </div>
     })}
   </div>
-}
+})
 
 function FileView({ file }: { file?: OpenFile }) {
   if (!file) return <div className="file-empty"><FileCode2 size={22} /><span>파일을 선택하세요</span></div>
   if (file.loading) return <div className="file-empty"><RefreshCw className="spin" size={18} /><span>파일을 읽는 중…</span></div>
   if (file.error) return <div className="file-empty file-error"><span>{file.error}</span></div>
+  if (file.kind === 'diff') {
+    const lines = (file.content ?? '').split('\n')
+    return <div className="file-view-shell diff-shell" aria-label={`${file.path} 변경사항`}><div className="diff-view">{lines.map((line, index) => {
+      const type = line.startsWith('@@') ? 'hunk' : line.startsWith('+++') || line.startsWith('---') ? 'header' : line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : 'context'
+      return <div key={`${index}-${line}`} className={`diff-line diff-${type}`}><span className="diff-line-number" aria-hidden="true">{index + 1}</span><code>{line || ' '}</code></div>
+    })}</div></div>
+  }
   return <div className="file-view-shell"><pre className="file-content" aria-label={`${file.path} 파일 내용`}>{file.content}</pre></div>
 }
 
@@ -75,8 +82,8 @@ function App() {
   currentWorkspacePath.current = workspace?.path
   const openFiles = workspace ? openFilesByWorkspace[workspace.path] ?? {} : {}
   const activeTab = workspace ? activeTabs[workspace.path] ?? sessions[0]?.id ?? '' : ''
-  const updateActiveTab = (tab: string) => { if (workspace) setActiveTabs((current) => ({ ...current, [workspace.path]: tab })) }
-  const updateOpenFiles = (update: (current: Record<string, OpenFile>) => Record<string, OpenFile>) => { if (workspace) setOpenFilesByWorkspace((current) => ({ ...current, [workspace.path]: update(current[workspace.path] ?? {}) })) }
+  const updateActiveTab = useCallback((tab: string) => { if (workspace) setActiveTabs((current) => ({ ...current, [workspace.path]: tab })) }, [workspace?.path])
+  const updateOpenFiles = useCallback((update: (current: Record<string, OpenFile>) => Record<string, OpenFile>) => { if (workspace) setOpenFilesByWorkspace((current) => ({ ...current, [workspace.path]: update(current[workspace.path] ?? {}) })) }, [workspace?.path])
   const files = useMemo(() => filterFiles(workspaceFiles, query), [workspaceFiles, query])
   const tabs: Tab[] = [...sessions.map((session) => ({ id: session.id, label: session.name, kind: 'session' as const })), ...Object.values(openFiles).map((file) => ({ id: `file:${file.path}`, label: file.path.split(/[\\/]/).pop() ?? file.path, kind: 'file' as const }))]
 
@@ -166,29 +173,29 @@ function App() {
     void refreshUsage()
   }, [workspace?.path])
 
-  const openFile = async (_entry: FileEntry, path: string) => {
+  const openFile = useCallback(async (path: string) => {
     if (!workspace) return
     const id = `file:${path}`
-    updateOpenFiles((current) => ({ ...current, [path]: { path, loading: true } }))
+    updateOpenFiles((current) => ({ ...current, [path]: { path, loading: true, kind: 'file' } }))
     updateActiveTab(id)
     try {
       const file = await readFile(workspace.path, path)
-      updateOpenFiles((current) => ({ ...current, [path]: { ...file, loading: false } }))
+      updateOpenFiles((current) => ({ ...current, [path]: { ...file, loading: false, kind: 'file' } }))
     } catch (error) {
-      updateOpenFiles((current) => ({ ...current, [path]: { path, loading: false, error: String(error) } }))
+      updateOpenFiles((current) => ({ ...current, [path]: { path, loading: false, error: String(error), kind: 'file' } }))
     }
-  }
+  }, [updateActiveTab, updateOpenFiles, workspace?.path])
 
   const openChangedFile = async (path: string) => {
     if (!workspace) return
     const id = `file:${path}`
-    updateOpenFiles((current) => ({ ...current, [path]: { path, loading: true } }))
+    updateOpenFiles((current) => ({ ...current, [path]: { path, loading: true, kind: 'diff' } }))
     updateActiveTab(id)
     try {
       const file = await readDiff(workspace.path, path)
-      updateOpenFiles((current) => ({ ...current, [path]: { ...file, loading: false } }))
+      updateOpenFiles((current) => ({ ...current, [path]: { ...file, loading: false, kind: 'diff' } }))
     } catch (error) {
-      updateOpenFiles((current) => ({ ...current, [path]: { path, loading: false, error: String(error) } }))
+      updateOpenFiles((current) => ({ ...current, [path]: { path, loading: false, error: String(error), kind: 'diff' } }))
     }
   }
 
@@ -225,7 +232,7 @@ function App() {
     const selected = await open({ directory: true, multiple: false, title: '작업 공간 선택' })
     if (typeof selected !== 'string') return
     const name = selected.split(/[\\/]/).filter(Boolean).pop() ?? selected
-    const nextWorkspace = { id: selected, name, path: selected, branch: '', changedFiles: 0 }
+    const nextWorkspace = { id: selected, name, path: selected, branch: '' }
     const existing = workspaces.find((item) => item.path.toLowerCase() === selected.toLowerCase())
     if (existing) {
       switchWorkspace(existing)

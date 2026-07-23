@@ -1,17 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
 
-export type BackendStatus = {
-  status: string
-  transport: string
-}
-
-export async function getBackendStatus(): Promise<BackendStatus> {
-  if (!('__TAURI_INTERNALS__' in window)) {
-    return { status: 'browser-preview', transport: 'vite' }
-  }
-  return invoke<BackendStatus>('backend_status')
-}
-
 export type WorkspaceSnapshot = {
   files: string[]
   directories: string[]
