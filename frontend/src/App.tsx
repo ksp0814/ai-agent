@@ -271,7 +271,7 @@ function App() {
     setUsageOpen(false)
   }
 
-  return <main className="app-shell">
+  return <main className={`app-shell ${filePanelOpen ? '' : 'file-panel-closed'}`}>
     <header className="mobile-header"><button className="icon-button" onClick={() => setSidebarOpen((open) => !open)} aria-label="프로젝트 사이드바 열기"><Menu size={18} /></button><span className="mobile-brand">PERSONAL AGENT</span><button className="icon-button" onClick={() => setFilePanelOpen((open) => !open)} aria-label="파일 패널 열기"><PanelLeft size={18} /></button></header>
     <aside className={`project-sidebar ${sidebarOpen ? '' : 'is-collapsed'}`}>
       <div className="brand-block"><div className="brand-mark"><TerminalSquare size={17} /></div><div><strong>PERSONAL AGENT</strong><span>LOCAL CODING WORKBENCH</span></div></div>
@@ -281,7 +281,7 @@ function App() {
       <div className="sidebar-spacer" />
     </aside>
     <section className="workspace-main">
-      <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div><button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
+      <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div>{!filePanelOpen && <button className="file-panel-toggle" onClick={() => setFilePanelOpen(true)} aria-label="프로젝트 파일 패널 열기" title="프로젝트 파일 패널 열기"><PanelLeft size={16} /></button>}<button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
       <div className={`terminal-view ${activeFile ? 'is-file-view' : ''}`} role="log" aria-label="터미널">
         {workspace ? workspaces.flatMap((item) => (sessionsByWorkspace[item.path] ?? (item.path === workspace.path ? sessions : [])).map((session) => <div key={`${item.path}:${session.id}`} className={`terminal-session ${!activeFile && item.path === workspace.path && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={item.path} /></div>)) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
         {activeFile && <FileView file={activeFile} />}

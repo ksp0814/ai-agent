@@ -91,7 +91,7 @@ class WorkspaceTools:
         path.write_text(content, encoding="utf-8")
 
     def run_tests(self) -> str:
-        result = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=self.root, text=True, capture_output=True, timeout=120)
+        result = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=self.root, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=120)
         return (result.stdout + result.stderr).strip() or f"pytest 종료 코드: {result.returncode}"
 
     def git_status(self) -> str:
@@ -107,6 +107,8 @@ class WorkspaceTools:
                 ["git", "status", "--porcelain=v1", "-b", "--untracked-files=all"],
                 cwd=self.root,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=30,
             )
@@ -147,6 +149,8 @@ class WorkspaceTools:
             ["git", "worktree", "add", "-b", branch, str(target), base],
             cwd=self.root,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=120,
         )
@@ -169,7 +173,7 @@ class WorkspaceTools:
             ["git", "diff", "--cached", "--no-ext-diff", "--", relative],
         ):
             try:
-                result = subprocess.run(command, cwd=self.root, text=True, capture_output=True, timeout=30)
+                result = subprocess.run(command, cwd=self.root, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=30)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 return f"Git Diff를 확인하지 못했습니다: {exc}"
             if result.returncode == 0 and result.stdout:
@@ -184,6 +188,8 @@ class WorkspaceTools:
                     ["git", "diff", "--no-index", "--no-ext-diff", "--", os.devnull, relative],
                     cwd=self.root,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     capture_output=True,
                     timeout=30,
                 )
@@ -199,7 +205,7 @@ class WorkspaceTools:
         results = []
         for command in commands:
             try:
-                result = subprocess.run(command, cwd=self.root, text=True, capture_output=True, timeout=120)
+                result = subprocess.run(command, cwd=self.root, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=120)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 results.append(f"검증 실패: {exc}")
                 continue
@@ -209,7 +215,7 @@ class WorkspaceTools:
 
     def _run_readonly(self, command: list[str], error: str) -> str:
         try:
-            result = subprocess.run(command, cwd=self.root, text=True, capture_output=True, timeout=30)
+            result = subprocess.run(command, cwd=self.root, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return f"{error}: {exc}"
         if result.returncode != 0:

@@ -38,7 +38,7 @@ class WorkspaceToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             note = root / "note.txt"
-            note.write_text("hello\n", encoding="utf-8")
+            note.write_text("안녕하세요\n", encoding="utf-8")
 
             files, directories, metadata = WorkspaceTools(root).scan_tree_snapshot()
 
@@ -86,7 +86,7 @@ class WorkspaceToolsTests(unittest.TestCase):
             root = Path(directory)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             note = root / "note.txt"
-            note.write_text("hello\n", encoding="utf-8")
+            note.write_text("안녕하세요\n", encoding="utf-8")
             tools = WorkspaceTools(root)
 
             snapshot = tools.git_snapshot()
@@ -94,6 +94,7 @@ class WorkspaceToolsTests(unittest.TestCase):
             self.assertTrue(snapshot["available"])
             self.assertEqual(snapshot["entries"]["note.txt"], "??")
             self.assertIn("note.txt", tools.git_diff_file("note.txt"))
+            self.assertIn("안녕하세요", tools.git_diff_file("note.txt"))
 
     def test_git_snapshot_lists_untracked_files_not_directories(self):
         with tempfile.TemporaryDirectory() as directory:

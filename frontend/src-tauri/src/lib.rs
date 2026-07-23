@@ -109,6 +109,9 @@ mod commands {
     }
 
     fn bundled_bridge_path(app: &AppHandle) -> Option<PathBuf> {
+        if cfg!(debug_assertions) {
+            return None;
+        }
         let executable = if cfg!(windows) {
             "personal-agent-bridge.exe"
         } else {

@@ -13,6 +13,7 @@ button, input { font: inherit; }
 button { border: 0; color: inherit; cursor: pointer; }
 
 .app-shell { position: fixed; inset: 0; display: grid; grid-template-columns: 248px minmax(560px, 1fr) 292px; grid-template-rows: minmax(0, 1fr) 34px; min-height: 0; overflow: hidden; background: #0b0d0e; }
+.app-shell.file-panel-closed { grid-template-columns: 248px minmax(560px, 1fr) 0; }
 .project-sidebar, .file-panel { background: #101314; border-color: #23282a; }
 .project-sidebar { display: flex; flex-direction: column; padding: 20px 14px 14px; border-right: 1px solid #23282a; }
 .brand-block { display: flex; gap: 10px; align-items: center; padding: 2px 8px 28px; }
@@ -50,6 +51,8 @@ button { border: 0; color: inherit; cursor: pointer; }
 .new-session-button { display: grid; place-items: center; width: 44px; margin-left: 2px; background: transparent; color: #7c8983; }
 .new-session-button:hover { color: #b6e8cf; background: #171c1d; }
 .new-session-button:disabled { cursor: not-allowed; opacity: .35; }
+.file-panel-toggle { display: grid; place-items: center; width: 38px; margin-left: auto; background: transparent; color: #7c8983; }
+.file-panel-toggle:hover { color: #b6e8cf; background: #171c1d; }
 .muted { color: #65736d; }
 .terminal-view { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; flex: 1 1 0; flex-direction: column; padding: 32px 42px 20px; background: radial-gradient(circle at 50% 15%, #15201c 0, #0d0f10 34%); }
 .terminal-view.is-file-view { padding: 22px 28px 20px; }
@@ -123,6 +126,7 @@ button { border: 0; color: inherit; cursor: pointer; }
 .input-hint { color: #596861; font-size: 10px; }
 
 .file-panel { display: flex; min-width: 0; min-height: 0; overflow: hidden; flex-direction: column; padding: 20px 14px 14px; border-left: 1px solid #23282a; }
+.file-panel.is-collapsed { visibility: hidden; }
 .file-panel-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 0 5px 17px; }
 .eyebrow { color: #6c7b73; font-size: 9px; font-weight: 700; letter-spacing: .12em; }
 .file-panel h2 { margin: 4px 0 0; font-size: 14px; letter-spacing: -.02em; }
