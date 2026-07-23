@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
-  ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen, GitBranch, Menu,
+  ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen, FolderPlus, GitBranch, Menu,
   PanelLeft, Plus, RefreshCw, Search, SquareTerminal, TerminalSquare, X,
 } from 'lucide-react'
-import { buildFileTree, demoFiles, demoWorkspace, filterFiles, type FileEntry, type Workspace } from './appState'
+import { buildFileTree, filterFiles, type FileEntry, type Workspace } from './appState'
 import { approveFile, getUsageSnapshot, getWorkspaceSnapshot, readDiff, readFile, resetUsage, rollbackFile, type WorkspaceSnapshot } from './bridge'
 import { loadSessions, saveSessions, type AgentSession } from './sessionState'
 import { TerminalPane } from './TerminalPane'
@@ -23,7 +23,7 @@ function loadWorkspaces(): Workspace[] {
   } catch {
     // Use the default workspace when persisted state is unavailable.
   }
-  return [demoWorkspace]
+  return []
 }
 
 function FileTree({ entries, depth = 0, basePath = '', onOpen }: { entries: FileEntry[]; depth?: number; basePath?: string; onOpen: (entry: FileEntry, path: string) => void }) {
@@ -55,28 +55,29 @@ function FileView({ file }: { file?: OpenFile }) {
 function App() {
   const [query, setQuery] = useState('')
   const [workspaces, setWorkspaces] = useState<Workspace[]>(loadWorkspaces)
-  const [workspace, setWorkspace] = useState<Workspace>(() => workspaces[0])
-  const [sessions, setSessions] = useState<AgentSession[]>(() => loadSessions(workspaces[0].path, window.localStorage))
+  const [workspace, setWorkspace] = useState<Workspace | null>(() => workspaces[0] ?? null)
+  const [sessions, setSessions] = useState<AgentSession[]>(() => workspaces[0] ? loadSessions(workspaces[0].path, window.localStorage) : [])
   const [sessionsByWorkspace, setSessionsByWorkspace] = useState<Record<string, AgentSession[]>>(() => Object.fromEntries(workspaces.map((item) => [item.path, loadSessions(item.path, window.localStorage)])))
-  const [activeSessionId, setActiveSessionId] = useState(() => loadSessions(workspaces[0].path, window.localStorage)[0].id)
+  const [activeSessionId, setActiveSessionId] = useState(() => workspaces[0] ? loadSessions(workspaces[0].path, window.localStorage)[0].id : '')
   const [activeTabs, setActiveTabs] = useState<Record<string, string>>({})
   const [openFilesByWorkspace, setOpenFilesByWorkspace] = useState<Record<string, Record<string, OpenFile>>>({})
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [filePanelOpen, setFilePanelOpen] = useState(true)
-  const [workspaceFiles, setWorkspaceFiles] = useState(demoFiles)
+  const [workspaceFiles, setWorkspaceFiles] = useState<FileEntry[]>([])
   const [git, setGit] = useState<WorkspaceSnapshot['git']>({ available: false, branch: 'dev', entries: {} })
   const [usage, setUsage] = useState<{ percent: number | null; resetsAt?: number; credits: number; creditId: string }>({ percent: null, credits: 0, creditId: '' })
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageResetting, setUsageResetting] = useState(false)
   const [workspaceMenu, setWorkspaceMenu] = useState<{ path: string; x: number; y: number } | null>(null)
-  const openFiles = openFilesByWorkspace[workspace.path] ?? {}
-  const activeTab = activeTabs[workspace.path] ?? sessions[0]?.id ?? ''
-  const updateActiveTab = (tab: string) => setActiveTabs((current) => ({ ...current, [workspace.path]: tab }))
-  const updateOpenFiles = (update: (current: Record<string, OpenFile>) => Record<string, OpenFile>) => setOpenFilesByWorkspace((current) => ({ ...current, [workspace.path]: update(current[workspace.path] ?? {}) }))
+  const openFiles = workspace ? openFilesByWorkspace[workspace.path] ?? {} : {}
+  const activeTab = workspace ? activeTabs[workspace.path] ?? sessions[0]?.id ?? '' : ''
+  const updateActiveTab = (tab: string) => { if (workspace) setActiveTabs((current) => ({ ...current, [workspace.path]: tab })) }
+  const updateOpenFiles = (update: (current: Record<string, OpenFile>) => Record<string, OpenFile>) => { if (workspace) setOpenFilesByWorkspace((current) => ({ ...current, [workspace.path]: update(current[workspace.path] ?? {}) })) }
   const files = useMemo(() => filterFiles(workspaceFiles, query), [workspaceFiles, query])
   const tabs: Tab[] = [...sessions.map((session) => ({ id: session.id, label: session.name, kind: 'session' as const })), ...Object.values(openFiles).map((file) => ({ id: `file:${file.path}`, label: file.path.split(/[\\/]/).pop() ?? file.path, kind: 'file' as const }))]
 
   const refreshWorkspace = async () => {
+    if (!workspace) return
     try {
       const snapshot = await getWorkspaceSnapshot(workspace.path)
       setWorkspaceFiles(buildFileTree(snapshot.files, snapshot.directories))
@@ -87,6 +88,7 @@ function App() {
   }
 
   const refreshUsage = async () => {
+    if (!workspace) return
     try {
       const snapshot = await getUsageSnapshot(workspace.path)
       const primary = snapshot.rateLimits?.primary ?? snapshot.primary
@@ -104,7 +106,7 @@ function App() {
   }
 
   const consumeUsageReset = async () => {
-    if (!usage.credits || usageResetting) return
+    if (!workspace || !usage.credits || usageResetting) return
     if (!window.confirm(`사용량 초기화권 ${usage.credits}개 중 1개를 사용하시겠습니까?`)) return
     setUsageResetting(true)
     try {
@@ -117,23 +119,30 @@ function App() {
     }
   }
 
-  useEffect(() => { saveSessions(workspace.path, sessions, window.localStorage) }, [workspace.path, sessions])
-  useEffect(() => { setSessionsByWorkspace((current) => ({ ...current, [workspace.path]: sessions })) }, [workspace.path, sessions])
+  useEffect(() => { if (workspace) saveSessions(workspace.path, sessions, window.localStorage) }, [workspace?.path, sessions])
+  useEffect(() => { if (workspace) setSessionsByWorkspace((current) => ({ ...current, [workspace.path]: sessions })) }, [workspace?.path, sessions])
   useEffect(() => { window.localStorage.setItem('personal-agent:workspaces', JSON.stringify(workspaces)) }, [workspaces])
   useEffect(() => {
     const closeMenu = () => setWorkspaceMenu(null)
     window.addEventListener('click', closeMenu)
     return () => window.removeEventListener('click', closeMenu)
   }, [])
-  useEffect(() => { window.localStorage.setItem(`personal-agent:active-session:${workspace.path}`, activeSessionId) }, [workspace.path, activeSessionId])
+  useEffect(() => { if (workspace && activeSessionId) window.localStorage.setItem(`personal-agent:active-session:${workspace.path}`, activeSessionId) }, [workspace?.path, activeSessionId])
   useEffect(() => {
+    if (!workspace) {
+      setWorkspaceFiles([])
+      setGit({ available: false, branch: '', entries: {} })
+      setUsage({ percent: null, credits: 0, creditId: '' })
+      return
+    }
     const storedActive = window.localStorage.getItem(`personal-agent:active-session:${workspace.path}`)
     if (storedActive && sessions.some((session) => session.id === storedActive)) { setActiveSessionId(storedActive); updateActiveTab(storedActive) }
     void refreshWorkspace()
     void refreshUsage()
-  }, [workspace.path])
+  }, [workspace?.path])
 
   const openFile = async (_entry: FileEntry, path: string) => {
+    if (!workspace) return
     const id = `file:${path}`
     updateOpenFiles((current) => ({ ...current, [path]: { path, loading: true } }))
     updateActiveTab(id)
@@ -146,6 +155,7 @@ function App() {
   }
 
   const openChangedFile = async (path: string) => {
+    if (!workspace) return
     const id = `file:${path}`
     updateOpenFiles((current) => ({ ...current, [path]: { path, loading: true } }))
     updateActiveTab(id)
@@ -178,8 +188,9 @@ function App() {
 
   const selectTab = (tab: Tab) => { updateActiveTab(tab.id); if (tab.kind === 'session') setActiveSessionId(tab.id) }
   const activeFile = activeTab.startsWith('file:') ? openFiles[activeTab.slice('file:'.length)] : undefined
-  const approveChangedFile = async (path: string) => { try { await approveFile(workspace.path, path); await refreshWorkspace() } catch (error) { window.alert(`변경 승인 실패: ${String(error)}`) } }
+  const approveChangedFile = async (path: string) => { if (!workspace) return; try { await approveFile(workspace.path, path); await refreshWorkspace() } catch (error) { window.alert(`변경 승인 실패: ${String(error)}`) } }
   const rollbackChangedFile = async (path: string) => {
+    if (!workspace) return
     if (!window.confirm(`${path} 파일을 기준 상태로 되돌릴까요? 새 파일은 복구 보관함으로 이동합니다.`)) return
     try { await rollbackFile(workspace.path, path); await refreshWorkspace() } catch (error) { window.alert(`되돌리기 실패: ${String(error)}`) }
   }
@@ -203,19 +214,29 @@ function App() {
     setWorkspace(nextWorkspace)
     const nextSessions = loadSessions(nextWorkspace.path, window.localStorage)
     setSessions(nextSessions)
-    const nextTab = activeTabs[nextWorkspace.path] ?? nextSessions[0].id
-    setActiveSessionId(nextSessions.some((session) => session.id === nextTab) ? nextTab : nextSessions[0].id)
+    const nextTab = activeTabs[nextWorkspace.path] ?? nextSessions[0]?.id ?? ''
+    setActiveSessionId(nextSessions.some((session) => session.id === nextTab) ? nextTab : nextSessions[0]?.id ?? '')
     setActiveTabs((current) => ({ ...current, [nextWorkspace.path]: nextTab }))
   }
 
   const removeWorkspace = (path: string) => {
-    if (workspaces.length === 1) { window.alert('최소 하나의 작업 공간은 남아 있어야 합니다.'); return }
     const target = workspaces.find((item) => item.path === path)
     if (!target || !window.confirm(`프로젝트 목록에서 '${target.name}'을 제거할까요?\n실제 폴더와 파일은 삭제되지 않습니다.`)) return
     const remaining = workspaces.filter((item) => item.path !== path)
     setWorkspaces(remaining)
     setWorkspaceMenu(null)
-    if (workspace.path === path) switchWorkspace(remaining[0])
+    if (workspace?.path !== path) return
+    if (remaining[0]) {
+      switchWorkspace(remaining[0])
+      return
+    }
+    setWorkspace(null)
+    setSessions([])
+    setActiveSessionId('')
+    setWorkspaceFiles([])
+    setGit({ available: false, branch: '', entries: {} })
+    setUsage({ percent: null, credits: 0, creditId: '' })
+    setUsageOpen(false)
   }
 
   return <main className="app-shell">
@@ -223,29 +244,30 @@ function App() {
     <aside className={`project-sidebar ${sidebarOpen ? '' : 'is-collapsed'}`}>
       <div className="brand-block"><div className="brand-mark"><TerminalSquare size={17} /></div><div><strong>PERSONAL AGENT</strong><span>LOCAL CODING WORKBENCH</span></div></div>
       <div className="section-label">프로젝트 <button className="tiny-button" onClick={() => void addWorkspace()} aria-label="작업 공간 추가" title="작업 공간 추가"><Plus size={15} /></button></div>
-      <div className="workspace-list">{workspaces.map((item) => <button key={item.path} className={`workspace-card ${item.path === workspace.path ? 'is-active' : ''}`} onClick={() => switchWorkspace(item)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setWorkspaceMenu({ path: item.path, x: event.clientX, y: event.clientY }) }} title={item.path}><div className="workspace-icon"><SquareTerminal size={16} /></div><div className="workspace-copy"><strong>{item.name}</strong><span>{item.path}</span></div>{item.path === workspace.path && <span className="workspace-dot" />}</button>)}</div>
+      <div className="workspace-list">{workspaces.length ? workspaces.map((item) => <button key={item.path} className={`workspace-card ${item.path === workspace?.path ? 'is-active' : ''}`} onClick={() => switchWorkspace(item)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setWorkspaceMenu({ path: item.path, x: event.clientX, y: event.clientY }) }} title={item.path}><div className="workspace-icon"><SquareTerminal size={16} /></div><div className="workspace-copy"><strong>{item.name}</strong><span>{item.path}</span></div>{item.path === workspace?.path && <span className="workspace-dot" />}</button>) : <div className="workspace-empty"><FolderPlus size={15} /><span>프로젝트를 추가하세요</span></div>}</div>
       {workspaceMenu && <div className="workspace-context-menu" style={{ left: workspaceMenu.x, top: workspaceMenu.y }} onClick={(event) => event.stopPropagation()}><button onClick={() => removeWorkspace(workspaceMenu.path)}>작업 공간 제거</button></div>}
       <div className="sidebar-spacer" />
-      <div className="sidebar-footer" title="현재 작업 공간의 Git 브랜치"><GitBranch size={14} /><span>{git.branch || workspace.branch || '브랜치 없음'}</span></div>
     </aside>
     <section className="workspace-main">
-      <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div><button className="new-session-button" onClick={createSession} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
+      <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div><button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
       <div className={`terminal-view ${activeFile ? 'is-file-view' : ''}`} role="log" aria-label="터미널">
-        {workspaces.flatMap((item) => (sessionsByWorkspace[item.path] ?? (item.path === workspace.path ? sessions : [])).map((session) => <div key={`${item.path}:${session.id}`} className={`terminal-session ${!activeFile && item.path === workspace.path && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={item.path} /></div>))}
+        {workspace ? workspaces.flatMap((item) => (sessionsByWorkspace[item.path] ?? (item.path === workspace.path ? sessions : [])).map((session) => <div key={`${item.path}:${session.id}`} className={`terminal-session ${!activeFile && item.path === workspace.path && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={item.path} /></div>)) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
         {activeFile && <FileView file={activeFile} />}
-      </div>
-      <div className="usage-area">
-        {usageOpen && <div className="usage-popover" role="dialog" aria-label="Codex 사용량 상세"><div className="usage-popover-header"><strong>Codex 사용량</strong><button onClick={() => setUsageOpen(false)} aria-label="사용량 상세 닫기"><X size={14} /></button></div><div className="usage-popover-value">{usage.percent === null ? '확인할 수 없음' : `${usage.percent.toFixed(0)}% 사용 중`}</div><div className="usage-popover-meta">{usage.resetsAt ? `${new Date(usage.resetsAt * 1000).toLocaleString()} 재설정` : '재설정 일정 정보 없음'}</div><button className="usage-reset-button" disabled={!usage.credits || usageResetting} onClick={() => void consumeUsageReset()}>{usageResetting ? '초기화 중…' : usage.credits ? `사용량 초기화권 사용 (${usage.credits}개)` : '사용 가능한 초기화권 없음'}</button></div>}
-        <button className="status-bar" onClick={() => setUsageOpen((open) => !open)} aria-expanded={usageOpen} aria-label="Codex 사용량 상세 열기"><span className="status-bar-label">Codex 사용률</span><div className="status-bar-track"><span style={{ width: `${usage.percent ?? 0}%` }} /></div><strong>{usage.percent === null ? '—' : `${usage.percent.toFixed(0)}%`}</strong><span className="status-bar-hint">클릭하여 상세 보기</span><span className="status-bar-refresh" role="button" onClick={(event) => { event.stopPropagation(); void refreshUsage() }} aria-label="사용률 새로고침"><RefreshCw size={13} /></span></button>
       </div>
     </section>
     <aside className={`file-panel ${filePanelOpen ? '' : 'is-collapsed'}`}>
+      {!workspace ? <div className="file-panel-empty"><FolderPlus size={22} /><strong>프로젝트 파일</strong><span>작업 공간을 추가하면 파일이 표시됩니다.</span></div> : <>
       <div className="file-panel-header"><div><span className="eyebrow">WORKSPACE</span><h2>프로젝트 파일</h2></div><button className="icon-button" onClick={() => setFilePanelOpen(false)} aria-label="파일 패널 닫기"><PanelLeft size={16} /></button></div>
       <div className="git-summary"><GitBranch size={14} /><span>{git.branch || workspace.branch || '브랜치 없음'}</span><span className="separator">·</span><span className="changed-count">{Object.keys(git.entries).length} 변경</span></div>
       <label className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="파일 검색…" aria-label="파일 검색" /></label>
       <FileTree entries={files} onOpen={openFile} />
       {Object.keys(git.entries).length > 0 && <div className="changed-files" aria-live="polite"><span className="eyebrow">CHANGED FILES</span>{Object.entries(git.entries).slice(0, 5).map(([path, status]) => <div key={path} className="changed-file"><button className="changed-file-name" onClick={() => void openChangedFile(path)}><span>{status.trim() || 'M'}</span>{path}</button><button className="change-action approve" onClick={() => void approveChangedFile(path)} aria-label={`${path} 변경 승인`}>승인</button><button className="change-action rollback" onClick={() => void rollbackChangedFile(path)} aria-label={`${path} 변경 되돌리기`}>되돌리기</button></div>)}</div>}
+      </>}
     </aside>
+    <div className="usage-area">
+      {usageOpen && <div className="usage-popover" role="dialog" aria-label="Codex 사용량 상세"><div className="usage-popover-header"><strong>Codex 사용량</strong><button onClick={() => setUsageOpen(false)} aria-label="사용량 상세 닫기"><X size={14} /></button></div><div className="usage-popover-value">{usage.percent === null ? '확인할 수 없음' : `${usage.percent.toFixed(0)}% 사용 중`}</div><div className="usage-popover-meta">{usage.resetsAt ? `${new Date(usage.resetsAt * 1000).toLocaleString()} 재설정` : '재설정 일정 정보 없음'}</div><button className="usage-reset-button" disabled={!usage.credits || usageResetting} onClick={() => void consumeUsageReset()}>{usageResetting ? '초기화 중…' : usage.credits ? `사용량 초기화권 사용 (${usage.credits}개)` : '사용 가능한 초기화권 없음'}</button></div>}
+      <button className="status-bar" onClick={() => setUsageOpen((open) => !open)} aria-expanded={usageOpen} aria-label="Codex 사용량 상세 열기"><span className="status-bar-label">Codex 사용률</span><div className="status-bar-track"><span style={{ width: `${usage.percent ?? 0}%` }} /></div><strong>{usage.percent === null ? '—' : `${usage.percent.toFixed(0)}%`}</strong><span className="status-bar-hint">클릭하여 상세 보기</span><span className="status-bar-refresh" role="button" onClick={(event) => { event.stopPropagation(); void refreshUsage() }} aria-label="사용률 새로고침"><RefreshCw size={13} /></span></button>
+    </div>
   </main>
 }
 

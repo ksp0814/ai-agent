@@ -59,12 +59,6 @@ mod commands {
 
     #[tauri::command]
     pub fn bridge_request(app: AppHandle, workspace: String, request: Value) -> Result<Value, String> {
-        let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .canonicalize()
-            .map_err(|error| format!("프로젝트 루트를 찾지 못했습니다: {error}"))?;
-        let python_path = project_root.join("src");
         let request_json = serde_json::to_string(&request)
             .map_err(|error| format!("요청을 직렬화하지 못했습니다: {error}"))?;
         let mut command = if let Some(bridge) = bundled_bridge_path(&app) {
@@ -72,6 +66,8 @@ mod commands {
             command.args([workspace.as_str(), "--request", request_json.as_str()]);
             command
         } else {
+            let project_root = project_root()?;
+            let python_path = project_root.join("src");
             let mut command = Command::new(python_executable(&project_root));
             command
                 .env("PYTHONPATH", &python_path)
@@ -79,7 +75,7 @@ mod commands {
             command
         };
         let output = command
-            .current_dir(&project_root)
+            .current_dir(&workspace)
             .output()
             .map_err(|error| format!("Python 브리지를 시작하지 못했습니다: {error}"))?;
         if !output.status.success() {
@@ -139,12 +135,12 @@ mod commands {
         session_id: String,
         workspace: String,
     ) -> Result<(), String> {
-        let root = project_root()?;
         let mut command = if let Some(bridge) = bundled_bridge_path(&app) {
             let mut command = Command::new(bridge);
             command.args(["--terminal", workspace.as_str()]);
             command
         } else {
+            let root = project_root()?;
             let mut command = Command::new(python_executable(&root));
             command
                 .env("PYTHONPATH", root.join("src"))
@@ -152,7 +148,7 @@ mod commands {
             command
         };
         let mut child = command
-            .current_dir(&root)
+            .current_dir(&workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

@@ -35,6 +35,7 @@ export function TerminalPane({ sessionId, workspace }: Props) {
     }
 
     let stopped = false
+    let terminalReady = false
     let unlisten: (() => void) | undefined
     const eventSubscription = listen<TerminalEvent>('terminal-event', (event) => {
       const payload = event.payload
@@ -47,6 +48,11 @@ export function TerminalPane({ sessionId, workspace }: Props) {
     const start = async () => {
       try {
         await startTerminal(terminalId, workspace)
+        if (stopped) {
+          await stopTerminal(terminalId)
+          return
+        }
+        terminalReady = true
         await resizeTerminal(terminalId, terminal.cols, terminal.rows)
       } catch (error) {
         terminal.write(`\x1b[31m터미널을 시작하지 못했습니다: ${String(error)}\x1b[0m\r\n`)
@@ -61,6 +67,7 @@ export function TerminalPane({ sessionId, workspace }: Props) {
     const focusTerminal = () => terminal.focus()
     containerRef.current.addEventListener('mousedown', focusTerminal)
     const resizeObserver = new ResizeObserver(() => {
+      if (!terminalReady) return
       fit.fit()
       void resizeTerminal(terminalId, terminal.cols, terminal.rows)
     })
@@ -68,6 +75,7 @@ export function TerminalPane({ sessionId, workspace }: Props) {
 
     return () => {
       stopped = true
+      terminalReady = false
       unlisten?.()
       void eventSubscription.then((cleanup) => cleanup())
       input.dispose()
