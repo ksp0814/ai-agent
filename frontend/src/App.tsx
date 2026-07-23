@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
   ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen, FolderPlus, GitBranch, Menu,
   PanelLeft, Plus, RefreshCw, Search, SquareTerminal, TerminalSquare, X,
 } from 'lucide-react'
 import { buildFileTree, filterFiles, type FileEntry, type Workspace } from './appState'
-import { approveFile, getUsageSnapshot, getWorkspaceSnapshot, readDiff, readFile, resetUsage, rollbackFile, type WorkspaceSnapshot } from './bridge'
+import { approveFile, getUsageSnapshot, getWorkspaceSnapshot, readDiff, readFile, resetUsage, rollbackFile, type UsageSnapshot, type WorkspaceSnapshot } from './bridge'
 import { loadSessions, saveSessions, type AgentSession } from './sessionState'
 import { TerminalPane } from './TerminalPane'
 import './styles.css'
@@ -69,6 +69,10 @@ function App() {
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageResetting, setUsageResetting] = useState(false)
   const [workspaceMenu, setWorkspaceMenu] = useState<{ path: string; x: number; y: number } | null>(null)
+  const currentWorkspacePath = useRef<string | undefined>(workspace?.path)
+  const workspaceSnapshotCache = useRef<Record<string, { snapshot: WorkspaceSnapshot; refreshedAt: number }>>({})
+  const usageCache = useRef<{ snapshot: UsageSnapshot; refreshedAt: number } | null>(null)
+  currentWorkspacePath.current = workspace?.path
   const openFiles = workspace ? openFilesByWorkspace[workspace.path] ?? {} : {}
   const activeTab = workspace ? activeTabs[workspace.path] ?? sessions[0]?.id ?? '' : ''
   const updateActiveTab = (tab: string) => { if (workspace) setActiveTabs((current) => ({ ...current, [workspace.path]: tab })) }
@@ -76,30 +80,51 @@ function App() {
   const files = useMemo(() => filterFiles(workspaceFiles, query), [workspaceFiles, query])
   const tabs: Tab[] = [...sessions.map((session) => ({ id: session.id, label: session.name, kind: 'session' as const })), ...Object.values(openFiles).map((file) => ({ id: `file:${file.path}`, label: file.path.split(/[\\/]/).pop() ?? file.path, kind: 'file' as const }))]
 
-  const refreshWorkspace = async () => {
+  const applyWorkspaceSnapshot = (snapshot: WorkspaceSnapshot) => {
+    setWorkspaceFiles(buildFileTree(snapshot.files, snapshot.directories))
+    setGit(snapshot.git)
+  }
+
+  const refreshWorkspace = async (force = false) => {
     if (!workspace) return
+    const workspacePath = workspace.path
+    const cached = workspaceSnapshotCache.current[workspacePath]
+    if (cached) {
+      applyWorkspaceSnapshot(cached.snapshot)
+      if (!force && Date.now() - cached.refreshedAt < 5_000) return
+    }
     try {
-      const snapshot = await getWorkspaceSnapshot(workspace.path)
-      setWorkspaceFiles(buildFileTree(snapshot.files, snapshot.directories))
-      setGit(snapshot.git)
+      const snapshot = await getWorkspaceSnapshot(workspacePath)
+      workspaceSnapshotCache.current[workspacePath] = { snapshot, refreshedAt: Date.now() }
+      if (currentWorkspacePath.current === workspacePath) applyWorkspaceSnapshot(snapshot)
     } catch {
       // The browser preview intentionally keeps its local demo tree.
     }
   }
 
-  const refreshUsage = async () => {
+  const applyUsageSnapshot = (snapshot: UsageSnapshot) => {
+    const primary = snapshot.rateLimits?.primary ?? snapshot.primary
+    const percent = Number(primary?.usedPercent)
+    const credits = snapshot.rateLimitResetCredits?.credits ?? []
+    setUsage({
+      percent: Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null,
+      resetsAt: primary?.resetsAt,
+      credits: snapshot.rateLimitResetCredits?.availableCount ?? credits.length,
+      creditId: credits[0]?.id ?? '',
+    })
+  }
+
+  const refreshUsage = async (force = false) => {
     if (!workspace) return
+    const cached = usageCache.current
+    if (cached) {
+      applyUsageSnapshot(cached.snapshot)
+      if (!force && Date.now() - cached.refreshedAt < 30_000) return
+    }
     try {
       const snapshot = await getUsageSnapshot(workspace.path)
-      const primary = snapshot.rateLimits?.primary ?? snapshot.primary
-      const percent = Number(primary?.usedPercent)
-      const credits = snapshot.rateLimitResetCredits?.credits ?? []
-      setUsage({
-        percent: Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null,
-        resetsAt: primary?.resetsAt,
-        credits: snapshot.rateLimitResetCredits?.availableCount ?? credits.length,
-        creditId: credits[0]?.id ?? '',
-      })
+      usageCache.current = { snapshot, refreshedAt: Date.now() }
+      applyUsageSnapshot(snapshot)
     } catch {
       setUsage({ percent: null, credits: 0, creditId: '' })
     }
@@ -111,7 +136,7 @@ function App() {
     setUsageResetting(true)
     try {
       await resetUsage(workspace.path, usage.creditId)
-      await refreshUsage()
+      await refreshUsage(true)
     } catch (error) {
       window.alert(`사용량 초기화 실패: ${String(error)}`)
     } finally {
@@ -188,11 +213,11 @@ function App() {
 
   const selectTab = (tab: Tab) => { updateActiveTab(tab.id); if (tab.kind === 'session') setActiveSessionId(tab.id) }
   const activeFile = activeTab.startsWith('file:') ? openFiles[activeTab.slice('file:'.length)] : undefined
-  const approveChangedFile = async (path: string) => { if (!workspace) return; try { await approveFile(workspace.path, path); await refreshWorkspace() } catch (error) { window.alert(`변경 승인 실패: ${String(error)}`) } }
+  const approveChangedFile = async (path: string) => { if (!workspace) return; try { await approveFile(workspace.path, path); await refreshWorkspace(true) } catch (error) { window.alert(`변경 승인 실패: ${String(error)}`) } }
   const rollbackChangedFile = async (path: string) => {
     if (!workspace) return
     if (!window.confirm(`${path} 파일을 기준 상태로 되돌릴까요? 새 파일은 복구 보관함으로 이동합니다.`)) return
-    try { await rollbackFile(workspace.path, path); await refreshWorkspace() } catch (error) { window.alert(`되돌리기 실패: ${String(error)}`) }
+    try { await rollbackFile(workspace.path, path); await refreshWorkspace(true) } catch (error) { window.alert(`되돌리기 실패: ${String(error)}`) }
   }
 
   const addWorkspace = async () => {
@@ -266,7 +291,7 @@ function App() {
     </aside>
     <div className="usage-area">
       {usageOpen && <div className="usage-popover" role="dialog" aria-label="Codex 사용량 상세"><div className="usage-popover-header"><strong>Codex 사용량</strong><button onClick={() => setUsageOpen(false)} aria-label="사용량 상세 닫기"><X size={14} /></button></div><div className="usage-popover-value">{usage.percent === null ? '확인할 수 없음' : `${usage.percent.toFixed(0)}% 사용 중`}</div><div className="usage-popover-meta">{usage.resetsAt ? `${new Date(usage.resetsAt * 1000).toLocaleString()} 재설정` : '재설정 일정 정보 없음'}</div><button className="usage-reset-button" disabled={!usage.credits || usageResetting} onClick={() => void consumeUsageReset()}>{usageResetting ? '초기화 중…' : usage.credits ? `사용량 초기화권 사용 (${usage.credits}개)` : '사용 가능한 초기화권 없음'}</button></div>}
-      <button className="status-bar" onClick={() => setUsageOpen((open) => !open)} aria-expanded={usageOpen} aria-label="Codex 사용량 상세 열기"><span className="status-bar-label">Codex 사용률</span><div className="status-bar-track"><span style={{ width: `${usage.percent ?? 0}%` }} /></div><strong>{usage.percent === null ? '—' : `${usage.percent.toFixed(0)}%`}</strong><span className="status-bar-hint">클릭하여 상세 보기</span><span className="status-bar-refresh" role="button" onClick={(event) => { event.stopPropagation(); void refreshUsage() }} aria-label="사용률 새로고침"><RefreshCw size={13} /></span></button>
+      <button className="status-bar" onClick={() => setUsageOpen((open) => !open)} aria-expanded={usageOpen} aria-label="Codex 사용량 상세 열기"><span className="status-bar-label">Codex 사용률</span><div className="status-bar-track"><span style={{ width: `${usage.percent ?? 0}%` }} /></div><strong>{usage.percent === null ? '—' : `${usage.percent.toFixed(0)}%`}</strong><span className="status-bar-hint">클릭하여 상세 보기</span><span className="status-bar-refresh" role="button" onClick={(event) => { event.stopPropagation(); void refreshUsage(true) }} aria-label="사용률 새로고침"><RefreshCw size={13} /></span></button>
     </div>
   </main>
 }
