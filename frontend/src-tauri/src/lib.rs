@@ -6,6 +6,12 @@ mod commands {
     use std::sync::Mutex;
     use std::thread;
 
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+
+    #[cfg(windows)]
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
     use serde::Serialize;
     use serde_json::Value;
     use tauri::{AppHandle, Emitter, Manager, State};
@@ -74,6 +80,7 @@ mod commands {
                 .args(["-m", "personal_agent.bridge", workspace.as_str(), "--request", request_json.as_str()]);
             command
         };
+        configure_child_process(&mut command);
         let output = command
             .current_dir(&workspace)
             .output()
@@ -110,6 +117,11 @@ mod commands {
         }
     }
 
+    fn configure_child_process(command: &mut Command) {
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
     fn bundled_bridge_path(app: &AppHandle) -> Option<PathBuf> {
         let executable = if cfg!(windows) {
             "personal-agent-bridge.exe"
@@ -117,6 +129,7 @@ mod commands {
             "personal-agent-bridge"
         };
         let candidates = [
+            app.path().resource_dir().ok().map(|path| path.join("resources").join(executable)),
             app.path().resource_dir().ok().map(|path| path.join(executable)),
             Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join(executable)),
         ];
@@ -147,6 +160,7 @@ mod commands {
                 .args(["-m", "personal_agent.terminal_bridge", workspace.as_str()]);
             command
         };
+        configure_child_process(&mut command);
         let mut child = command
             .current_dir(&workspace)
             .stdin(Stdio::piped())
