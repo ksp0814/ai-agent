@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { getVersion } from '@tauri-apps/api/app'
 import { open } from '@tauri-apps/plugin-dialog'
 import { relaunch } from '@tauri-apps/plugin-process'
@@ -19,6 +19,10 @@ type OpenFile = { path: string; content?: string; loading: boolean; error?: stri
 const MAX_SNAPSHOT_CACHE_ENTRIES = 8
 const MAX_OPEN_FILES_PER_WORKSPACE = 24
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000
+const MIN_SIDEBAR_WIDTH = 180
+const MAX_SIDEBAR_WIDTH = 420
+const MIN_FILE_PANEL_WIDTH = 220
+const MAX_FILE_PANEL_WIDTH = 440
 
 function loadWorkspaces(): Workspace[] {
   try {
@@ -77,6 +81,8 @@ function App() {
   const [openFilesByWorkspace, setOpenFilesByWorkspace] = useState<Record<string, Record<string, OpenFile>>>({})
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [filePanelOpen, setFilePanelOpen] = useState(true)
+  const [sidebarWidth, setSidebarWidth] = useState(248)
+  const [filePanelWidth, setFilePanelWidth] = useState(292)
   const [workspaceFiles, setWorkspaceFiles] = useState<FileEntry[]>([])
   const [git, setGit] = useState<WorkspaceSnapshot['git']>({ available: false, branch: 'dev', entries: {} })
   const [usage, setUsage] = useState<{ percent: number | null; resetsAt?: number; credits: number; creditId: string }>({ percent: null, credits: 0, creditId: '' })
@@ -92,6 +98,29 @@ function App() {
   const currentWorkspacePath = useRef<string | undefined>(workspace?.path)
   const workspaceSnapshotCache = useRef<Record<string, { snapshot: WorkspaceSnapshot; refreshedAt: number }>>({})
   const usageCache = useRef<{ snapshot: UsageSnapshot; refreshedAt: number } | null>(null)
+  const startResize = (side: 'left' | 'right', event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const initialWidth = side === 'left' ? sidebarWidth : filePanelWidth
+    const minWidth = side === 'left' ? MIN_SIDEBAR_WIDTH : MIN_FILE_PANEL_WIDTH
+    const maxWidth = side === 'left' ? MAX_SIDEBAR_WIDTH : MAX_FILE_PANEL_WIDTH
+    const handleMove = (moveEvent: globalThis.PointerEvent) => {
+      const delta = moveEvent.clientX - startX
+      const nextWidth = Math.max(minWidth, Math.min(maxWidth, initialWidth + (side === 'left' ? delta : -delta)))
+      if (side === 'left') setSidebarWidth(nextWidth)
+      else setFilePanelWidth(nextWidth)
+    }
+    const stopResize = () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', stopResize)
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', stopResize, { once: true })
+  }
   currentWorkspacePath.current = workspace?.path
   const openFiles = workspace ? openFilesByWorkspace[workspace.path] ?? {} : {}
   const activeTab = workspace ? activeTabs[workspace.path] ?? sessions[0]?.id ?? '' : ''
@@ -360,7 +389,7 @@ function App() {
     setUsageOpen(false)
   }
 
-  return <main className={`app-shell ${filePanelOpen ? '' : 'file-panel-closed'}`}>
+  return <main className={`app-shell ${filePanelOpen ? '' : 'file-panel-closed'}`} style={{ '--sidebar-width': `${sidebarWidth}px`, '--file-panel-width': `${filePanelWidth}px` } as CSSProperties}>
     <header className="mobile-header"><button className="icon-button" onClick={() => setSidebarOpen((open) => !open)} aria-label="프로젝트 사이드바 열기"><Menu size={18} /></button><span className="mobile-brand">PERSONAL AGENT</span><button className="icon-button" onClick={() => setFilePanelOpen((open) => !open)} aria-label="파일 패널 열기"><PanelLeft size={18} /></button></header>
     <aside className={`project-sidebar ${sidebarOpen ? '' : 'is-collapsed'}`}>
       <div className="brand-block"><div className="brand-mark"><TerminalSquare size={17} /></div><div><strong>PERSONAL AGENT</strong><span>LOCAL CODING WORKBENCH</span></div></div>
@@ -369,6 +398,7 @@ function App() {
       {workspaceMenu && <div className="workspace-context-menu" style={{ left: workspaceMenu.x, top: workspaceMenu.y }} onClick={(event) => event.stopPropagation()}><button onClick={() => removeWorkspace(workspaceMenu.path)}>작업 공간 제거</button></div>}
       <div className="sidebar-spacer" />
     </aside>
+    <div className="resize-handle" role="separator" aria-orientation="vertical" aria-label="왼쪽 영역 너비 조절" onPointerDown={(event) => startResize('left', event)} />
     <section className="workspace-main">
       {availableUpdate && <div className="update-banner" role="status"><div><strong>새 버전이 있습니다</strong><span>현재 v{currentVersion || '—'} → 새 버전 v{availableUpdate.version}</span>{updateError && <em>{updateError}</em>}</div><button onClick={() => void installUpdate()} disabled={updateInstalling}>{updateInstalling ? `업데이트 중${updateProgress === null ? '…' : ` ${updateProgress}%`}` : '업데이트'}</button></div>}
       <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div>{!filePanelOpen && <button className="file-panel-toggle" onClick={() => setFilePanelOpen(true)} aria-label="프로젝트 파일 패널 열기" title="프로젝트 파일 패널 열기"><PanelLeft size={16} /></button>}<button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
@@ -382,6 +412,7 @@ function App() {
         {activeFile && <FileView file={activeFile} />}
       </div>
     </section>
+    <div className={`resize-handle ${filePanelOpen ? '' : 'is-disabled'}`} role="separator" aria-orientation="vertical" aria-label="오른쪽 영역 너비 조절" onPointerDown={(event) => { if (filePanelOpen) startResize('right', event) }} />
     <aside className={`file-panel ${filePanelOpen ? '' : 'is-collapsed'}`}>
       {!workspace ? <div className="file-panel-empty"><FolderPlus size={22} /><strong>프로젝트 파일</strong><span>작업 공간을 추가하면 파일이 표시됩니다.</span></div> : <>
       <div className="file-panel-header"><div><span className="eyebrow">WORKSPACE</span><h2>프로젝트 파일</h2></div><button className="icon-button" onClick={() => setFilePanelOpen(false)} aria-label="파일 패널 닫기"><PanelLeft size={16} /></button></div>
