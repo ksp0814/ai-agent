@@ -3,7 +3,7 @@ mod commands {
     use std::io::{BufRead, BufReader, Write};
     use std::path::PathBuf;
     use std::process::{Child, ChildStdin, Command, Stdio};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     #[cfg(windows)]
@@ -21,7 +21,10 @@ mod commands {
     pub struct ManagedTerminal {
         child: Child,
         stdin: ChildStdin,
+        output: Arc<Mutex<String>>,
     }
+
+    const TERMINAL_BUFFER_LIMIT: usize = 64 * 1024;
 
     #[derive(Clone, Debug, Serialize)]
     pub struct TerminalEvent {
@@ -136,7 +139,13 @@ mod commands {
         state: State<'_, TerminalState>,
         session_id: String,
         workspace: String,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
+        {
+            let terminals = state.0.lock().map_err(|_| "터미널 상태 잠금에 실패했습니다.".to_string())?;
+            if terminals.contains_key(&session_id) {
+                return Ok(true);
+            }
+        }
         let mut command = if let Some(bridge) = bundled_bridge_path(&app) {
             let mut command = Command::new(bridge);
             command.args(["--terminal", workspace.as_str()]);
@@ -160,6 +169,8 @@ mod commands {
         let mut stdin = child.stdin.take().ok_or_else(|| "터미널 stdin을 열지 못했습니다.".to_string())?;
         let stdout = child.stdout.take().ok_or_else(|| "터미널 stdout을 열지 못했습니다.".to_string())?;
         write_control(&mut stdin, serde_json::json!({"command": "start"}))?;
+        let output_buffer = Arc::new(Mutex::new(String::new()));
+        let buffer_for_reader = Arc::clone(&output_buffer);
 
         let session_for_reader = session_id.clone();
         thread::spawn(move || {
@@ -176,6 +187,19 @@ mod commands {
                         continue;
                     }
                 };
+                if parsed["event"] == "output" {
+                    if let Some(data) = parsed["data"].as_str() {
+                        if let Ok(mut buffer) = buffer_for_reader.lock() {
+                            buffer.push_str(data);
+                            if buffer.len() > TERMINAL_BUFFER_LIMIT {
+                                let trim_to = buffer.len() - TERMINAL_BUFFER_LIMIT;
+                                if let Some((boundary, _)) = buffer.char_indices().find(|(index, _)| *index >= trim_to) {
+                                    buffer.drain(..boundary);
+                                }
+                            }
+                        }
+                    }
+                }
                 let _ = app.emit("terminal-event", TerminalEvent {
                     session_id: session_for_reader.clone(),
                     event: parsed["event"].as_str().unwrap_or("error").to_string(),
@@ -186,11 +210,15 @@ mod commands {
         });
 
         let mut terminals = state.0.lock().map_err(|_| "터미널 상태 잠금에 실패했습니다.".to_string())?;
-        if let Some(mut previous) = terminals.insert(session_id, ManagedTerminal { child, stdin }) {
-            let _ = previous.child.kill();
-            let _ = previous.child.wait();
-        }
-        Ok(())
+        terminals.insert(session_id, ManagedTerminal { child, stdin, output: output_buffer });
+        Ok(false)
+    }
+
+    #[tauri::command]
+    pub fn terminal_buffer(state: State<'_, TerminalState>, session_id: String) -> Result<String, String> {
+        let terminals = state.0.lock().map_err(|_| "터미널 상태 잠금에 실패했습니다.".to_string())?;
+        let terminal = terminals.get(&session_id).ok_or_else(|| "터미널 세션이 없습니다.".to_string())?;
+        terminal.output.lock().map(|buffer| buffer.clone()).map_err(|_| "터미널 출력 잠금에 실패했습니다.".to_string())
     }
 
     #[tauri::command]
@@ -231,6 +259,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::bridge_request,
             commands::start_terminal,
+            commands::terminal_buffer,
             commands::write_terminal,
             commands::resize_terminal,
             commands::stop_terminal

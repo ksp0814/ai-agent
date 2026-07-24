@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { resizeTerminal, startTerminal, stopTerminal, subscribeTerminalEvents, writeTerminal, type TerminalEvent } from './bridge'
+import { readTerminalBuffer, resizeTerminal, startTerminal, subscribeTerminalEvents, writeTerminal, type TerminalEvent } from './bridge'
 import '@xterm/xterm/css/xterm.css'
 
 type Props = {
@@ -44,10 +44,13 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
 
     const start = async () => {
       try {
-        await startTerminal(terminalId, workspace)
+        const reused = await startTerminal(terminalId, workspace)
         if (stopped) {
-          await stopTerminal(terminalId)
           return
+        }
+        if (reused) {
+          const bufferedOutput = await readTerminalBuffer(terminalId)
+          if (bufferedOutput) terminal.write(bufferedOutput)
         }
         terminalReady = true
         await resizeTerminal(terminalId, terminal.cols, terminal.rows)
@@ -86,7 +89,6 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
       containerRef.current?.removeEventListener('mousedown', focusTerminal)
       resizeObserver.disconnect()
       terminal.dispose()
-      void stopTerminal(terminalId)
     }
   }, [sessionId, workspace])
 

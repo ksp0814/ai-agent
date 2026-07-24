@@ -7,7 +7,7 @@ import {
   PanelLeft, Plus, RefreshCw, Search, SquareTerminal, TerminalSquare, X,
 } from 'lucide-react'
 import { buildFileTree, filterFiles, type FileEntry, type Workspace } from './appState'
-import { approveFile, getUsageSnapshot, getWorkspaceSnapshot, readDiff, readFile, resetUsage, rollbackFile, type UsageSnapshot, type WorkspaceSnapshot } from './bridge'
+import { approveFile, getUsageSnapshot, getWorkspaceSnapshot, readDiff, readFile, resetUsage, rollbackFile, stopTerminal, type UsageSnapshot, type WorkspaceSnapshot } from './bridge'
 import { loadSessions, saveSessions, type AgentSession } from './sessionState'
 import { TerminalPane } from './TerminalPane'
 import './styles.css'
@@ -260,6 +260,7 @@ function App() {
       return
     }
     if (sessions.length === 1) return
+    if (workspace) void stopTerminal(`${workspace.path}::${tab.id}`)
     const nextSessions = sessions.filter((session) => session.id !== tab.id)
     setSessions(nextSessions)
     if (activeSessionId === tab.id) { setActiveSessionId(nextSessions[0].id); updateActiveTab(nextSessions[0].id) }
@@ -307,6 +308,8 @@ function App() {
   const removeWorkspace = (path: string) => {
     const target = workspaces.find((item) => item.path === path)
     if (!target || !window.confirm(`프로젝트 목록에서 '${target.name}'을 제거할까요?\n실제 폴더와 파일은 삭제되지 않습니다.`)) return
+    const removedSessions = sessionsByWorkspace[path] ?? (workspace?.path === path ? sessions : [])
+    removedSessions.forEach((session) => { void stopTerminal(`${path}::${session.id}`) })
     const remaining = workspaces.filter((item) => item.path !== path)
     setWorkspaces(remaining)
     setWorkspaceMenu(null)
@@ -337,7 +340,7 @@ function App() {
       {availableUpdate && <div className="update-banner" role="status"><div><strong>새 버전이 있습니다</strong><span>Personal Agent v{availableUpdate.version}</span>{updateError && <em>{updateError}</em>}</div><button onClick={() => void installUpdate()} disabled={updateInstalling}>{updateInstalling ? `업데이트 중${updateProgress === null ? '…' : ` ${updateProgress}%`}` : '업데이트'}</button></div>}
       <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div>{!filePanelOpen && <button className="file-panel-toggle" onClick={() => setFilePanelOpen(true)} aria-label="프로젝트 파일 패널 열기" title="프로젝트 파일 패널 열기"><PanelLeft size={16} /></button>}<button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
       <div className={`terminal-view ${activeFile ? 'is-file-view' : ''}`} role="log" aria-label="터미널">
-        {workspace ? workspaces.flatMap((item) => (sessionsByWorkspace[item.path] ?? (item.path === workspace.path ? sessions : [])).map((session) => <div key={`${item.path}:${session.id}`} className={`terminal-session ${!activeFile && item.path === workspace.path && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={item.path} /></div>)) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
+        {workspace ? (sessionsByWorkspace[workspace.path] ?? sessions).map((session) => <div key={`${workspace.path}:${session.id}`} className={`terminal-session ${!activeFile && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={workspace.path} /></div>) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
         {activeFile && <FileView file={activeFile} />}
       </div>
     </section>

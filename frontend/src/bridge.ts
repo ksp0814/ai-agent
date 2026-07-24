@@ -96,7 +96,11 @@ export function subscribeTerminalEvents(sessionId: string, listener: TerminalEve
 }
 
 export function startTerminal(sessionId: string, workspace: string) {
-  return invoke<void>('start_terminal', { sessionId, workspace })
+  return invoke<boolean>('start_terminal', { sessionId, workspace })
+}
+
+export function readTerminalBuffer(sessionId: string) {
+  return invoke<string>('terminal_buffer', { sessionId })
 }
 
 export function writeTerminal(sessionId: string, text: string) {
