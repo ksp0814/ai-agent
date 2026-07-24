@@ -13,6 +13,9 @@ import './styles.css'
 type Tab = { id: string; label: string; kind: 'session' | 'file' }
 type OpenFile = { path: string; content?: string; loading: boolean; error?: string; kind?: 'file' | 'diff' }
 
+const MAX_SNAPSHOT_CACHE_ENTRIES = 8
+const MAX_OPEN_FILES_PER_WORKSPACE = 24
+
 function loadWorkspaces(): Workspace[] {
   try {
     const stored = JSON.parse(window.localStorage.getItem('personal-agent:workspaces') ?? '[]')
@@ -83,7 +86,17 @@ function App() {
   const openFiles = workspace ? openFilesByWorkspace[workspace.path] ?? {} : {}
   const activeTab = workspace ? activeTabs[workspace.path] ?? sessions[0]?.id ?? '' : ''
   const updateActiveTab = useCallback((tab: string) => { if (workspace) setActiveTabs((current) => ({ ...current, [workspace.path]: tab })) }, [workspace?.path])
-  const updateOpenFiles = useCallback((update: (current: Record<string, OpenFile>) => Record<string, OpenFile>) => { if (workspace) setOpenFilesByWorkspace((current) => ({ ...current, [workspace.path]: update(current[workspace.path] ?? {}) })) }, [workspace?.path])
+  const updateOpenFiles = useCallback((update: (current: Record<string, OpenFile>) => Record<string, OpenFile>) => {
+    if (!workspace) return
+    setOpenFilesByWorkspace((current) => {
+      const nextFiles = update(current[workspace.path] ?? {})
+      const paths = Object.keys(nextFiles)
+      const boundedFiles = paths.length > MAX_OPEN_FILES_PER_WORKSPACE
+        ? Object.fromEntries(paths.slice(-MAX_OPEN_FILES_PER_WORKSPACE).map((path) => [path, nextFiles[path]]))
+        : nextFiles
+      return { ...current, [workspace.path]: boundedFiles }
+    })
+  }, [workspace?.path])
   const files = useMemo(() => filterFiles(workspaceFiles, query), [workspaceFiles, query])
   const tabs: Tab[] = [...sessions.map((session) => ({ id: session.id, label: session.name, kind: 'session' as const })), ...Object.values(openFiles).map((file) => ({ id: `file:${file.path}`, label: file.path.split(/[\\/]/).pop() ?? file.path, kind: 'file' as const }))]
 
@@ -103,6 +116,10 @@ function App() {
     try {
       const snapshot = await getWorkspaceSnapshot(workspacePath)
       workspaceSnapshotCache.current[workspacePath] = { snapshot, refreshedAt: Date.now() }
+      const cachedPaths = Object.keys(workspaceSnapshotCache.current)
+      if (cachedPaths.length > MAX_SNAPSHOT_CACHE_ENTRIES) {
+        delete workspaceSnapshotCache.current[cachedPaths[0]]
+      }
       if (currentWorkspacePath.current === workspacePath) applyWorkspaceSnapshot(snapshot)
     } catch {
       // The browser preview intentionally keeps its local demo tree.

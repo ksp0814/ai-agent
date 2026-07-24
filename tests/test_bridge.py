@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from personal_agent.bridge import ApprovalStore, handle_request, process_request
 
@@ -48,6 +49,19 @@ class BridgeTests(unittest.TestCase):
             target.write_text("after", encoding="utf-8")
             store.rollback("note.txt")
             self.assertEqual(target.read_text(encoding="utf-8"), "before")
+
+    def test_approval_store_batches_baseline_persistence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "one.txt").write_text("one", encoding="utf-8")
+            (root / "two.txt").write_text("two", encoding="utf-8")
+            store = ApprovalStore(root, recovery_root=root / "trash")
+
+            with patch.object(store, "_save", wraps=store._save) as save:
+                store.capture_many(["one.txt", "two.txt"])
+
+            self.assertEqual(save.call_count, 1)
+            self.assertEqual(set(store.records), {"one.txt", "two.txt"})
 
     def test_approval_store_moves_new_file_to_recovery_trash(self):
         with tempfile.TemporaryDirectory() as directory:

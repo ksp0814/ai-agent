@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 export type WorkspaceSnapshot = {
   files: string[]
@@ -68,6 +69,30 @@ export type TerminalEvent = {
   event: 'ready' | 'output' | 'error' | 'exit' | 'stopped'
   data?: string
   message?: string
+}
+
+type TerminalEventListener = (event: TerminalEvent) => void
+const terminalListeners = new Map<string, Set<TerminalEventListener>>()
+let terminalEventListenerStarted = false
+
+function startTerminalEventRouter() {
+  if (terminalEventListenerStarted) return
+  terminalEventListenerStarted = true
+  void listen<TerminalEvent>('terminal-event', (event) => {
+    const listeners = terminalListeners.get(event.payload.session_id)
+    listeners?.forEach((listener) => listener(event.payload))
+  })
+}
+
+export function subscribeTerminalEvents(sessionId: string, listener: TerminalEventListener) {
+  startTerminalEventRouter()
+  const listeners = terminalListeners.get(sessionId) ?? new Set<TerminalEventListener>()
+  listeners.add(listener)
+  terminalListeners.set(sessionId, listeners)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) terminalListeners.delete(sessionId)
+  }
 }
 
 export function startTerminal(sessionId: string, workspace: string) {

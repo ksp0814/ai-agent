@@ -58,6 +58,19 @@ class ApprovalStore:
             self.records[relative] = self._record_current(relative)
             self._save()
 
+    def capture_many(self, relatives: Iterable[str]) -> None:
+        changed = False
+        for relative in relatives:
+            if relative in self.records:
+                continue
+            try:
+                self.records[relative] = self._record_current(relative)
+            except (OSError, ValueError):
+                continue
+            changed = True
+        if changed:
+            self._save()
+
     def approve(self, relative: str) -> None:
         self.records[relative] = self._record_current(relative)
         self._save()
@@ -112,11 +125,10 @@ def handle_request(request: dict[str, object], workspace: Path) -> dict[str, obj
     if method == "workspace_snapshot":
         files, directories = tools.scan_tree()
         approvals = ApprovalStore(workspace)
-        for relative in files[:100]:
-            try:
-                approvals.capture(relative)
-            except (OSError, ValueError):
-                continue
+        try:
+            approvals.capture_many(files[:100])
+        except OSError:
+            pass
         return _ok({"files": files, "directories": directories, "git": tools.git_snapshot()})
     if method == "read_file":
         relative = request.get("path")

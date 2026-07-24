@@ -1,8 +1,7 @@
 import { memo, useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { listen } from '@tauri-apps/api/event'
-import { resizeTerminal, startTerminal, stopTerminal, writeTerminal, type TerminalEvent } from './bridge'
+import { resizeTerminal, startTerminal, stopTerminal, subscribeTerminalEvents, writeTerminal, type TerminalEvent } from './bridge'
 import '@xterm/xterm/css/xterm.css'
 
 type Props = {
@@ -36,14 +35,12 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
 
     let stopped = false
     let terminalReady = false
-    let unlisten: (() => void) | undefined
-    const eventSubscription = listen<TerminalEvent>('terminal-event', (event) => {
-      const payload = event.payload
-      if (payload.session_id !== terminalId) return
+    let resizeTimer: number | undefined
+    let lastSize = ''
+    const unsubscribe = subscribeTerminalEvents(terminalId, (payload: TerminalEvent) => {
       if (payload.event === 'output' && payload.data) terminal.write(payload.data)
       if (payload.event === 'error' && payload.message) terminal.write(`\r\n\x1b[31m${payload.message}\x1b[0m\r\n`)
     })
-    void eventSubscription.then((cleanup) => { if (stopped) cleanup(); else unlisten = cleanup })
 
     const start = async () => {
       try {
@@ -54,6 +51,7 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
         }
         terminalReady = true
         await resizeTerminal(terminalId, terminal.cols, terminal.rows)
+        lastSize = `${terminal.cols}x${terminal.rows}`
       } catch (error) {
         terminal.write(`\x1b[31m터미널을 시작하지 못했습니다: ${String(error)}\x1b[0m\r\n`)
       }
@@ -68,17 +66,23 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
     containerRef.current.addEventListener('mousedown', focusTerminal)
     const resizeObserver = new ResizeObserver(() => {
       if (!terminalReady) return
-      fit.fit()
-      void resizeTerminal(terminalId, terminal.cols, terminal.rows)
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer)
+      resizeTimer = window.setTimeout(() => {
+        fit.fit()
+        const size = `${terminal.cols}x${terminal.rows}`
+        if (size === lastSize) return
+        lastSize = size
+        void resizeTerminal(terminalId, terminal.cols, terminal.rows)
+      }, 80)
     })
     resizeObserver.observe(containerRef.current)
 
     return () => {
       stopped = true
       terminalReady = false
-      unlisten?.()
-      void eventSubscription.then((cleanup) => cleanup())
+      unsubscribe()
       input.dispose()
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer)
       containerRef.current?.removeEventListener('mousedown', focusTerminal)
       resizeObserver.disconnect()
       terminal.dispose()

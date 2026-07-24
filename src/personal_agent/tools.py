@@ -17,6 +17,8 @@ IGNORED_DIRECTORIES = {
     "target",
     "dist",
 }
+MAX_FILE_READ_BYTES = 2_000_000
+MAX_DIFF_BYTES = 4_000_000
 
 
 class WorkspaceTools:
@@ -83,6 +85,8 @@ class WorkspaceTools:
         path = self.resolve(relative)
         if not path.is_file():
             raise FileNotFoundError(relative)
+        if path.stat().st_size > MAX_FILE_READ_BYTES:
+            raise ValueError(f"파일이 너무 큽니다. {MAX_FILE_READ_BYTES // 1_000_000}MB 이하 파일만 열 수 있습니다.")
         return path.read_text(encoding="utf-8")
 
     def write_file(self, relative: str, content: str) -> None:
@@ -179,7 +183,7 @@ class WorkspaceTools:
             if result.returncode == 0 and result.stdout:
                 outputs.append(result.stdout)
         if outputs:
-            return "\n".join(outputs).rstrip()
+            return _limit_output("\n".join(outputs).rstrip(), MAX_DIFF_BYTES)
         if path.is_file() and not (self.root / ".git").exists():
             return "Git 저장소가 아닙니다."
         if path.is_file():
@@ -196,7 +200,7 @@ class WorkspaceTools:
             except (OSError, subprocess.TimeoutExpired) as exc:
                 return f"Git Diff를 확인하지 못했습니다: {exc}"
             if result.stdout:
-                return result.stdout.rstrip()
+                return _limit_output(result.stdout.rstrip(), MAX_DIFF_BYTES)
         return "Git 기준 변경 내용이 없습니다."
 
     def run_validation(self) -> str:
@@ -222,3 +226,11 @@ class WorkspaceTools:
             detail = (result.stderr or result.stdout).strip()
             return f"{error}: {detail or f'종료 코드: {result.returncode}'}"
         return result.stdout.strip()
+
+
+def _limit_output(value: str, limit: int) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit:
+        return value
+    truncated = encoded[:limit].decode("utf-8", errors="ignore")
+    return f"{truncated}\n\n[성능 보호를 위해 출력이 {limit // 1_000_000}MB에서 잘렸습니다.]"

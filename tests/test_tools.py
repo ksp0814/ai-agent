@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 import subprocess
 
-from personal_agent.tools import WorkspaceTools
+from personal_agent.tools import MAX_FILE_READ_BYTES, WorkspaceTools
 
 
 class WorkspaceToolsTests(unittest.TestCase):
@@ -45,6 +45,14 @@ class WorkspaceToolsTests(unittest.TestCase):
             self.assertEqual(files, ["note.txt"])
             self.assertEqual(directories, [])
             self.assertEqual(metadata["note.txt"], (note.stat().st_mtime_ns, note.stat().st_size))
+
+    def test_read_file_rejects_oversized_files_before_loading_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "large.txt").write_bytes(b"x" * (MAX_FILE_READ_BYTES + 1))
+
+            with self.assertRaisesRegex(ValueError, "너무 큽니다"):
+                WorkspaceTools(root).read_file("large.txt")
 
     def test_git_worktree_create(self):
         with tempfile.TemporaryDirectory() as directory:
