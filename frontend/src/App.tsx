@@ -405,7 +405,7 @@ function App() {
       <div className={`terminal-view ${activeFile ? 'is-file-view' : ''}`} role="log" aria-label="터미널">
         {workspace ? workspaces.map((item) => {
           const itemSessions = item.path === workspace.path ? sessions : sessionsByWorkspace[item.path] ?? []
-          return <div key={item.path} className={`workspace-terminal-group ${item.path === workspace.path ? 'is-active' : ''}`} aria-hidden={item.path !== workspace.path}>
+          return <div key={item.path} className={`workspace-terminal-group ${item.path === workspace.path ? 'is-active' : ''} ${activeFile ? 'is-file-hidden' : ''}`} aria-hidden={item.path !== workspace.path || Boolean(activeFile)}>
             {itemSessions.map((session) => <div key={`${item.path}:${session.id}`} className={`terminal-session ${!activeFile && item.path === workspace.path && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={item.path} /></div>)}
           </div>
         }) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
