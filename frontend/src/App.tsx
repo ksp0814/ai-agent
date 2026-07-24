@@ -1,5 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
+import { relaunch } from '@tauri-apps/plugin-process'
+import { check, type Update } from '@tauri-apps/plugin-updater'
 import {
   ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen, FolderPlus, GitBranch, Menu,
   PanelLeft, Plus, RefreshCw, Search, SquareTerminal, TerminalSquare, X,
@@ -78,6 +80,10 @@ function App() {
   const [usage, setUsage] = useState<{ percent: number | null; resetsAt?: number; credits: number; creditId: string }>({ percent: null, credits: 0, creditId: '' })
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageResetting, setUsageResetting] = useState(false)
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null)
+  const [updateInstalling, setUpdateInstalling] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null)
+  const [updateError, setUpdateError] = useState('')
   const [workspaceMenu, setWorkspaceMenu] = useState<{ path: string; x: number; y: number } | null>(null)
   const currentWorkspacePath = useRef<string | undefined>(workspace?.path)
   const workspaceSnapshotCache = useRef<Record<string, { snapshot: WorkspaceSnapshot; refreshedAt: number }>>({})
@@ -168,7 +174,37 @@ function App() {
     }
   }
 
+  const installUpdate = async () => {
+    if (!availableUpdate || updateInstalling) return
+    setUpdateInstalling(true)
+    setUpdateError('')
+    setUpdateProgress(0)
+    try {
+      await availableUpdate.downloadAndInstall((event) => {
+        if (event.event === 'Started') setUpdateProgress(1)
+        if (event.event === 'Progress') setUpdateProgress((current) => current === null ? 1 : Math.min(95, current + 1))
+        if (event.event === 'Finished') setUpdateProgress(100)
+      })
+      await relaunch()
+    } catch (error) {
+      setUpdateError(`업데이트 설치 실패: ${String(error)}`)
+      setUpdateInstalling(false)
+      setUpdateProgress(null)
+    }
+  }
+
   useEffect(() => { if (workspace) saveSessions(workspace.path, sessions, window.localStorage) }, [workspace?.path, sessions])
+  useEffect(() => {
+    const isDevelopment = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV
+    if (isDevelopment || !('__TAURI_INTERNALS__' in window)) return
+    let cancelled = false
+    void check().then((update) => {
+      if (!cancelled && update) setAvailableUpdate(update)
+    }).catch(() => {
+      // 업데이트 확인 실패는 작업 공간 사용을 막지 않습니다.
+    })
+    return () => { cancelled = true }
+  }, [])
   useEffect(() => { if (workspace) setSessionsByWorkspace((current) => ({ ...current, [workspace.path]: sessions })) }, [workspace?.path, sessions])
   useEffect(() => { window.localStorage.setItem('personal-agent:workspaces', JSON.stringify(workspaces)) }, [workspaces])
   useEffect(() => {
@@ -298,6 +334,7 @@ function App() {
       <div className="sidebar-spacer" />
     </aside>
     <section className="workspace-main">
+      {availableUpdate && <div className="update-banner" role="status"><div><strong>새 버전이 있습니다</strong><span>Personal Agent v{availableUpdate.version}</span>{updateError && <em>{updateError}</em>}</div><button onClick={() => void installUpdate()} disabled={updateInstalling}>{updateInstalling ? `업데이트 중${updateProgress === null ? '…' : ` ${updateProgress}%`}` : '업데이트'}</button></div>}
       <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div>{!filePanelOpen && <button className="file-panel-toggle" onClick={() => setFilePanelOpen(true)} aria-label="프로젝트 파일 패널 열기" title="프로젝트 파일 패널 열기"><PanelLeft size={16} /></button>}<button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
       <div className={`terminal-view ${activeFile ? 'is-file-view' : ''}`} role="log" aria-label="터미널">
         {workspace ? workspaces.flatMap((item) => (sessionsByWorkspace[item.path] ?? (item.path === workspace.path ? sessions : [])).map((session) => <div key={`${item.path}:${session.id}`} className={`terminal-session ${!activeFile && item.path === workspace.path && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={item.path} /></div>)) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}

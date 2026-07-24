@@ -42,6 +42,14 @@ button { border: 0; color: inherit; cursor: pointer; }
 .sidebar-spacer { flex: 1; }
 
 .workspace-main { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; flex-direction: column; background: #0d0f10; }
+.update-banner { position: absolute; z-index: 5; top: 10px; right: 14px; left: 14px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 12px; border: 1px solid #3b624d; border-radius: 7px; background: #17251e; box-shadow: 0 8px 20px #0008; }
+.update-banner div { display: flex; min-width: 0; align-items: baseline; gap: 9px; overflow: hidden; }
+.update-banner strong { color: #c7f0d7; font-size: 11px; white-space: nowrap; }
+.update-banner span, .update-banner em { overflow: hidden; color: #91ae9d; font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.update-banner em { color: #efadad; }
+.update-banner button { flex: 0 0 auto; padding: 6px 10px; border: 1px solid #5d9b78; border-radius: 5px; background: #28503a; color: #d4f5df; font-size: 10px; }
+.update-banner button:hover:not(:disabled) { background: #34704e; }
+.update-banner button:disabled { cursor: wait; opacity: .6; }
 .tab-bar { display: flex; min-height: 46px; flex: 0 0 46px; align-items: stretch; border-bottom: 1px solid #242a2c; background: #111516; }
 .tabs { display: flex; min-width: 0; overflow-x: auto; }
 .tab { display: flex; align-items: center; gap: 7px; padding: 0 14px; border-right: 1px solid #202526; background: transparent; color: #77837e; font-size: 12px; }

@@ -99,6 +99,17 @@ npm run tauri build
 
 배포된 앱 사용자는 Python을 설치할 필요가 없지만, Codex CLI 설치와 `codex login`은 필요합니다.
 
+### 앱 자동 업데이트
+
+배포된 앱은 시작할 때 GitHub Release의 최신 버전을 확인합니다. 새 버전이 있으면 중앙 화면에 알림이 표시되고, 사용자가 `업데이트` 버튼을 누르면 서명된 updater 파일을 다운로드·설치한 뒤 앱을 재시작합니다.
+
+GitHub Actions에서 updater 파일에 서명하려면 저장소 Secret을 추가해야 합니다.
+
+- `TAURI_SIGNING_PRIVATE_KEY`: 로컬에서 생성한 `personal-agent.key` 파일의 전체 내용
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: 키 생성 시 비밀번호를 사용한 경우에만 설정
+
+개인 키는 저장소에 커밋하지 말고 안전하게 백업해야 합니다. 키를 잃으면 기존 설치본에 새 업데이트를 배포할 수 없습니다. Release를 게시하면 Tauri Action이 생성한 `latest.json`과 서명된 Windows updater artifact를 앱이 읽습니다.
+
 ## OpenAI API 사용
 
 API 키와 모델을 환경변수로 설정하면 자연어 요청을 Responses API로 전달합니다.
