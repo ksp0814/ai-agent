@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getVersion } from '@tauri-apps/api/app'
 import { open } from '@tauri-apps/plugin-dialog'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
@@ -17,6 +18,7 @@ type OpenFile = { path: string; content?: string; loading: boolean; error?: stri
 
 const MAX_SNAPSHOT_CACHE_ENTRIES = 8
 const MAX_OPEN_FILES_PER_WORKSPACE = 24
+const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000
 
 function loadWorkspaces(): Workspace[] {
   try {
@@ -84,6 +86,8 @@ function App() {
   const [updateInstalling, setUpdateInstalling] = useState(false)
   const [updateProgress, setUpdateProgress] = useState<number | null>(null)
   const [updateError, setUpdateError] = useState('')
+  const [currentVersion, setCurrentVersion] = useState('')
+  const [updateChecking, setUpdateChecking] = useState(false)
   const [workspaceMenu, setWorkspaceMenu] = useState<{ path: string; x: number; y: number } | null>(null)
   const currentWorkspacePath = useRef<string | undefined>(workspace?.path)
   const workspaceSnapshotCache = useRef<Record<string, { snapshot: WorkspaceSnapshot; refreshedAt: number }>>({})
@@ -198,12 +202,41 @@ function App() {
     const isDevelopment = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV
     if (isDevelopment || !('__TAURI_INTERNALS__' in window)) return
     let cancelled = false
-    void check().then((update) => {
-      if (!cancelled && update) setAvailableUpdate(update)
-    }).catch(() => {
-      // 업데이트 확인 실패는 작업 공간 사용을 막지 않습니다.
-    })
-    return () => { cancelled = true }
+    let checking = false
+    const checkForUpdates = async () => {
+      if (cancelled || checking) return
+      checking = true
+      setUpdateChecking(true)
+      try {
+        const [version, update] = await Promise.all([getVersion(), check()])
+        if (cancelled) return
+        setCurrentVersion(version)
+        setAvailableUpdate(update)
+        setUpdateError('')
+      } catch (error) {
+        if (!cancelled) {
+          setUpdateError(`업데이트 확인 실패: ${String(error)}`)
+          console.error('업데이트 확인 실패', error)
+        }
+      } finally {
+        checking = false
+        if (!cancelled) setUpdateChecking(false)
+      }
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkForUpdates()
+    }
+    const handleManualCheck = () => void checkForUpdates()
+    void checkForUpdates()
+    const intervalId = window.setInterval(() => void checkForUpdates(), UPDATE_CHECK_INTERVAL_MS)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('personal-agent:check-updates', handleManualCheck)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('personal-agent:check-updates', handleManualCheck)
+    }
   }, [])
   useEffect(() => { if (workspace) setSessionsByWorkspace((current) => ({ ...current, [workspace.path]: sessions })) }, [workspace?.path, sessions])
   useEffect(() => { window.localStorage.setItem('personal-agent:workspaces', JSON.stringify(workspaces)) }, [workspaces])
@@ -337,7 +370,7 @@ function App() {
       <div className="sidebar-spacer" />
     </aside>
     <section className="workspace-main">
-      {availableUpdate && <div className="update-banner" role="status"><div><strong>새 버전이 있습니다</strong><span>Personal Agent v{availableUpdate.version}</span>{updateError && <em>{updateError}</em>}</div><button onClick={() => void installUpdate()} disabled={updateInstalling}>{updateInstalling ? `업데이트 중${updateProgress === null ? '…' : ` ${updateProgress}%`}` : '업데이트'}</button></div>}
+      {availableUpdate && <div className="update-banner" role="status"><div><strong>새 버전이 있습니다</strong><span>현재 v{currentVersion || '—'} → 새 버전 v{availableUpdate.version}</span>{updateError && <em>{updateError}</em>}</div><button onClick={() => void installUpdate()} disabled={updateInstalling}>{updateInstalling ? `업데이트 중${updateProgress === null ? '…' : ` ${updateProgress}%`}` : '업데이트'}</button></div>}
       <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div>{!filePanelOpen && <button className="file-panel-toggle" onClick={() => setFilePanelOpen(true)} aria-label="프로젝트 파일 패널 열기" title="프로젝트 파일 패널 열기"><PanelLeft size={16} /></button>}<button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
       <div className={`terminal-view ${activeFile ? 'is-file-view' : ''}`} role="log" aria-label="터미널">
         {workspace ? (sessionsByWorkspace[workspace.path] ?? sessions).map((session) => <div key={`${workspace.path}:${session.id}`} className={`terminal-session ${!activeFile && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={workspace.path} /></div>) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
@@ -355,7 +388,7 @@ function App() {
     </aside>
     <div className="usage-area">
       {usageOpen && <div className="usage-popover" role="dialog" aria-label="Codex 사용량 상세"><div className="usage-popover-header"><strong>Codex 사용량</strong><button onClick={() => setUsageOpen(false)} aria-label="사용량 상세 닫기"><X size={14} /></button></div><div className="usage-popover-value">{usage.percent === null ? '확인할 수 없음' : `${usage.percent.toFixed(0)}% 사용 중`}</div><div className="usage-popover-meta">{usage.resetsAt ? `${new Date(usage.resetsAt * 1000).toLocaleString()} 재설정` : '재설정 일정 정보 없음'}</div><button className="usage-reset-button" disabled={!usage.credits || usageResetting} onClick={() => void consumeUsageReset()}>{usageResetting ? '초기화 중…' : usage.credits ? `사용량 초기화권 사용 (${usage.credits}개)` : '사용 가능한 초기화권 없음'}</button></div>}
-      <button className="status-bar" onClick={() => setUsageOpen((open) => !open)} aria-expanded={usageOpen} aria-label="Codex 사용량 상세 열기"><span className="status-bar-label">Codex 사용률</span><div className="status-bar-track"><span style={{ width: `${usage.percent ?? 0}%` }} /></div><strong>{usage.percent === null ? '—' : `${usage.percent.toFixed(0)}%`}</strong><span className="status-bar-hint">클릭하여 상세 보기</span><span className="status-bar-refresh" role="button" onClick={(event) => { event.stopPropagation(); void refreshUsage(true) }} aria-label="사용률 새로고침"><RefreshCw size={13} /></span></button>
+      <div className="status-bar-row"><button className="status-bar" onClick={() => setUsageOpen((open) => !open)} aria-expanded={usageOpen} aria-label="Codex 사용량 상세 열기"><span className="status-bar-label">Codex 사용률</span><div className="status-bar-track"><span style={{ width: `${usage.percent ?? 0}%` }} /></div><strong>{usage.percent === null ? '—' : `${usage.percent.toFixed(0)}%`}</strong><span className="status-bar-hint">클릭하여 상세 보기</span><span className="status-bar-refresh" role="button" onClick={(event) => { event.stopPropagation(); void refreshUsage(true) }} aria-label="사용률 새로고침"><RefreshCw size={13} /></span></button><span className="app-version" title="현재 설치된 앱 버전">v{currentVersion || '—'}</span><button className="update-check-button" onClick={() => window.dispatchEvent(new Event('personal-agent:check-updates'))} disabled={updateChecking} aria-label="업데이트 확인" title={updateChecking ? '업데이트 확인 중' : '업데이트 확인'}><RefreshCw size={13} /></button></div>
     </div>
   </main>
 }

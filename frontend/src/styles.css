@@ -65,7 +65,8 @@ button { border: 0; color: inherit; cursor: pointer; }
 .terminal-view { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; flex: 1 1 0; flex-direction: column; padding: 32px 42px 20px; background: radial-gradient(circle at 50% 15%, #15201c 0, #0d0f10 34%); }
 .terminal-view.is-file-view { padding: 22px 28px 20px; }
 .usage-area { position: relative; z-index: 2; grid-column: 1 / -1; grid-row: 2; min-height: 34px; overflow: visible; border-top: 1px solid #232a27; background: #101413; }
-.status-bar { display: flex; width: 100%; min-width: 0; min-height: 34px; align-items: center; gap: 8px; padding: 0 16px; overflow: hidden; border: 0; background: transparent; color: #7d8c84; font-size: 10px; text-align: left; }
+.status-bar-row { display: flex; min-width: 0; min-height: 34px; align-items: center; }
+.status-bar { display: flex; flex: 1 1 auto; min-width: 0; min-height: 34px; align-items: center; gap: 8px; padding: 0 16px; overflow: hidden; border: 0; background: transparent; color: #7d8c84; font-size: 10px; text-align: left; }
 .status-bar:hover { background: #151c19; }
 .status-bar-label { color: #9eaca5; }
 .status-bar-track { width: 72px; height: 5px; overflow: hidden; border-radius: 99px; background: #28342e; }
@@ -74,6 +75,10 @@ button { border: 0; color: inherit; cursor: pointer; }
 .status-bar-hint { min-width: 0; overflow: hidden; color: #68766f; text-overflow: ellipsis; white-space: nowrap; }
 .status-bar-refresh { display: grid; place-items: center; padding: 2px; background: transparent; color: #73827a; }
 .status-bar-refresh:hover { color: #b6e8cf; }
+.app-version { flex: 0 0 auto; color: #718078; font-size: 10px; white-space: nowrap; }
+.update-check-button { display: grid; flex: 0 0 auto; place-items: center; margin: 0 12px 0 2px; padding: 3px; background: transparent; color: #73827a; }
+.update-check-button:hover:not(:disabled) { color: #b6e8cf; }
+.update-check-button:disabled { cursor: wait; opacity: .55; }
 .usage-popover { position: absolute; z-index: 3; left: 14px; bottom: calc(100% + 8px); width: 270px; padding: 13px; border: 1px solid #385345; border-radius: 8px; background: #151d19; box-shadow: 0 12px 28px #0008; }
 .usage-popover-header { display: flex; align-items: center; justify-content: space-between; color: #e6eee9; font-size: 12px; }
 .usage-popover-header button { display: grid; place-items: center; padding: 2px; background: transparent; color: #718078; }
