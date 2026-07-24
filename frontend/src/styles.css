@@ -91,6 +91,8 @@ button { border: 0; color: inherit; cursor: pointer; }
 .terminal-xterm .xterm { height: 100%; }
 .terminal-session { display: none; min-height: 0; flex: 1; }
 .terminal-session.is-visible { display: flex; }
+.workspace-terminal-group { display: none; min-height: 0; flex: 1; }
+.workspace-terminal-group.is-active { display: flex; }
 .file-empty { display: flex; min-height: 0; flex: 1; align-items: center; justify-content: center; gap: 9px; color: #77847d; font-size: 13px; }
 .empty-workspace, .file-panel-empty { display: flex; align-items: center; justify-content: center; text-align: center; }
 .empty-workspace { min-height: 0; flex: 1; flex-direction: column; color: #77847d; }

@@ -20,7 +20,16 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
       convertEol: true,
       fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
       fontSize: 13,
-      theme: { background: '#0d0f10', foreground: '#d9e4dd', cursor: '#8be0b7', selectionBackground: '#315b47' },
+      theme: {
+        background: '#0d0f10',
+        foreground: '#d9e4dd',
+        cursor: '#8be0b7',
+        selectionBackground: '#315b47',
+        black: '#1b211e', red: '#f07178', green: '#7ee2a8', yellow: '#e6c17a',
+        blue: '#82aaff', magenta: '#c792ea', cyan: '#89ddff', white: '#d9e4dd',
+        brightBlack: '#526158', brightRed: '#ff8b94', brightGreen: '#a6f3c2', brightYellow: '#f4d99b',
+        brightBlue: '#a8c7ff', brightMagenta: '#e2b8ff', brightCyan: '#b8efff', brightWhite: '#f5faf7',
+      },
     })
     const fit = new FitAddon()
     terminal.loadAddon(fit)
