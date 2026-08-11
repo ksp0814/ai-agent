@@ -2,11 +2,11 @@ import json
 import platform
 import shutil
 import subprocess
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 
-def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex", environment: Dict[str, str] | None = None) -> Dict[str, Any]:
+def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex", environment: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     resolved = shutil.which(executable) or executable
     command = [resolved, "app-server", "--listen", "stdio://"]
     if platform.system() == "Windows" and resolved.lower().endswith((".cmd", ".bat")):
@@ -46,12 +46,12 @@ def _call_codex(method: str, params: Dict[str, Any], executable: str = "codex", 
             process.wait(timeout=5)
 
 
-def fetch_codex_rate_limits(executable: str = "codex", environment: Dict[str, str] | None = None) -> Dict[str, Any]:
+def fetch_codex_rate_limits(executable: str = "codex", environment: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Read current Codex account rate-limit windows."""
     return _call_codex("account/rateLimits/read", {}, executable, environment)
 
 
-def consume_codex_reset_credit(credit_id: str = "", executable: str = "codex", environment: Dict[str, str] | None = None) -> str:
+def consume_codex_reset_credit(credit_id: str = "", executable: str = "codex", environment: Optional[Dict[str, str]] = None) -> str:
     """Consume one earned Codex rate-limit reset credit."""
     params = {"idempotencyKey": str(uuid4())}
     if credit_id:

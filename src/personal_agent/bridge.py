@@ -194,8 +194,11 @@ def main() -> None:
     if args.request is not None:
         print(process_request(args.request, workspace), flush=True)
         return
-    for response in process_lines(sys.stdin, workspace):
-        print(response, flush=True)
+    # Keep bridge process alive and answer each request immediately. Tauri
+    # reuses this process for file, Git, and usage requests.
+    for line in sys.stdin:
+        for response in process_lines([line], workspace):
+            print(response, flush=True)
 
 
 if __name__ == "__main__":

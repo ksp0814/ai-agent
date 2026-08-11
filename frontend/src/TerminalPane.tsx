@@ -45,10 +45,23 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
     let stopped = false
     let terminalReady = false
     let resizeTimer: number | undefined
+    let outputTimer: number | undefined
+    let pendingOutput = ''
     let lastSize = ''
+    const flushOutput = () => {
+      outputTimer = undefined
+      if (!pendingOutput || stopped) return
+      const output = pendingOutput
+      pendingOutput = ''
+      terminal.write(output)
+    }
+    const queueOutput = (output: string) => {
+      pendingOutput += output
+      if (outputTimer === undefined) outputTimer = window.setTimeout(flushOutput, 16)
+    }
     const unsubscribe = subscribeTerminalEvents(terminalId, (payload: TerminalEvent) => {
-      if (payload.event === 'output' && payload.data) terminal.write(payload.data)
-      if (payload.event === 'error' && payload.message) terminal.write(`\r\n\x1b[31m${payload.message}\x1b[0m\r\n`)
+      if (payload.event === 'output' && payload.data) queueOutput(payload.data)
+      if (payload.event === 'error' && payload.message) queueOutput(`\r\n\x1b[31m${payload.message}\x1b[0m\r\n`)
     })
 
     const start = async () => {
@@ -59,7 +72,7 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
         }
         if (reused) {
           const bufferedOutput = await readTerminalBuffer(terminalId)
-          if (bufferedOutput) terminal.write(bufferedOutput)
+          if (bufferedOutput) queueOutput(bufferedOutput)
         }
         terminalReady = true
         await resizeTerminal(terminalId, terminal.cols, terminal.rows)
@@ -95,6 +108,7 @@ export const TerminalPane = memo(function TerminalPane({ sessionId, workspace }:
       unsubscribe()
       input.dispose()
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer)
+      if (outputTimer !== undefined) window.clearTimeout(outputTimer)
       containerRef.current?.removeEventListener('mousedown', focusTerminal)
       resizeObserver.disconnect()
       terminal.dispose()

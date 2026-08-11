@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +39,19 @@ class BridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = process_request(json.dumps({"method": "ping"}), Path(directory))
         self.assertEqual(json.loads(output)["result"]["status"], "ready")
+
+    def test_stream_mode_answers_each_request(self):
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as directory, patch("personal_agent.bridge.sys.argv", ["bridge", directory]), patch(
+            "personal_agent.bridge.sys.stdin", StringIO('{"method":"ping"}\n{"method":"ping"}\n')
+        ), patch("personal_agent.bridge.sys.stdout", output):
+            from personal_agent.bridge import main
+
+            main()
+
+        responses = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(len(responses), 2)
+        self.assertTrue(all(response["result"]["status"] == "ready" for response in responses))
 
     def test_approval_store_restores_captured_content(self):
         with tempfile.TemporaryDirectory() as directory:

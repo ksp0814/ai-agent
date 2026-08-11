@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { getVersion } from '@tauri-apps/api/app'
 import { open } from '@tauri-apps/plugin-dialog'
 import { relaunch } from '@tauri-apps/plugin-process'
@@ -10,8 +10,9 @@ import {
 import { buildFileTree, filterFiles, type FileEntry, type Workspace } from './appState'
 import { approveFile, getUsageSnapshot, getWorkspaceSnapshot, readDiff, readFile, resetUsage, rollbackFile, stopTerminal, type UsageSnapshot, type WorkspaceSnapshot } from './bridge'
 import { loadSessions, saveSessions, type AgentSession } from './sessionState'
-import { TerminalPane } from './TerminalPane'
 import './styles.css'
+
+const TerminalPane = lazy(() => import('./TerminalPane').then(({ TerminalPane: pane }) => ({ default: pane })))
 
 type Tab = { id: string; label: string; kind: 'session' | 'file' }
 type OpenFile = { path: string; content?: string; loading: boolean; error?: string; kind?: 'file' | 'diff' }
@@ -56,7 +57,7 @@ const FileTree = memo(function FileTree({ entries, depth = 0, basePath = '', onO
   </div>
 })
 
-function FileView({ file }: { file?: OpenFile }) {
+const FileView = memo(function FileView({ file }: { file?: OpenFile }) {
   if (!file) return <div className="file-empty"><FileCode2 size={22} /><span>파일을 선택하세요</span></div>
   if (file.loading) return <div className="file-empty"><RefreshCw className="spin" size={18} /><span>파일을 읽는 중…</span></div>
   if (file.error) return <div className="file-empty file-error"><span>{file.error}</span></div>
@@ -68,7 +69,7 @@ function FileView({ file }: { file?: OpenFile }) {
     })}</div></div>
   }
   return <div className="file-view-shell"><pre className="file-content" aria-label={`${file.path} 파일 내용`}>{file.content}</pre></div>
-}
+})
 
 function App() {
   const [query, setQuery] = useState('')
@@ -136,8 +137,13 @@ function App() {
       return { ...current, [workspace.path]: boundedFiles }
     })
   }, [workspace?.path])
-  const files = useMemo(() => filterFiles(workspaceFiles, query), [workspaceFiles, query])
-  const tabs: Tab[] = [...sessions.map((session) => ({ id: session.id, label: session.name, kind: 'session' as const })), ...Object.values(openFiles).map((file) => ({ id: `file:${file.path}`, label: file.path.split(/[\\/]/).pop() ?? file.path, kind: 'file' as const }))]
+  const deferredQuery = useDeferredValue(query)
+  const files = useMemo(() => filterFiles(workspaceFiles, deferredQuery), [workspaceFiles, deferredQuery])
+  const tabs = useMemo<Tab[]>(() => [
+    ...sessions.map((session) => ({ id: session.id, label: session.name, kind: 'session' as const })),
+    ...Object.values(openFiles).map((file) => ({ id: `file:${file.path}`, label: file.path.split(/[\\/]/).pop() ?? file.path, kind: 'file' as const })),
+  ], [openFiles, sessions])
+  const changedEntries = useMemo(() => Object.entries(git.entries), [git.entries])
 
   const applyWorkspaceSnapshot = (snapshot: WorkspaceSnapshot) => {
     setWorkspaceFiles(buildFileTree(snapshot.files, snapshot.directories))
@@ -403,12 +409,12 @@ function App() {
       {availableUpdate && <div className="update-banner" role="status"><div><strong>새 버전이 있습니다</strong><span>현재 v{currentVersion || '—'} → 새 버전 v{availableUpdate.version}</span>{updateError && <em>{updateError}</em>}</div><button onClick={() => void installUpdate()} disabled={updateInstalling}>{updateInstalling ? `업데이트 중${updateProgress === null ? '…' : ` ${updateProgress}%`}` : '업데이트'}</button></div>}
       <div className="tab-bar"><div className="tabs" role="tablist" aria-label="열린 세션 및 파일">{tabs.map((tab) => <button key={tab.id} className={`tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => selectTab(tab)} role="tab" aria-selected={activeTab === tab.id}>{tab.kind === 'session' ? <SquareTerminal size={14} /> : <FileCode2 size={14} />}<span>{tab.label}</span>{(tab.kind === 'file' || sessions.length > 1) && <X size={13} onClick={(event) => { event.stopPropagation(); closeTab(tab) }} />}</button>)}</div>{!filePanelOpen && <button className="file-panel-toggle" onClick={() => setFilePanelOpen(true)} aria-label="프로젝트 파일 패널 열기" title="프로젝트 파일 패널 열기"><PanelLeft size={16} /></button>}<button className="new-session-button" onClick={createSession} disabled={!workspace} aria-label="새 Codex 세션"><Plus size={17} /></button></div>
       <div className={`terminal-view ${activeFile ? 'is-file-view' : ''}`} role="log" aria-label="터미널">
-        {workspace ? workspaces.map((item) => {
+        {workspace ? <Suspense fallback={<div className="terminal-loading">터미널 준비 중…</div>}>{workspaces.map((item) => {
           const itemSessions = item.path === workspace.path ? sessions : sessionsByWorkspace[item.path] ?? []
           return <div key={item.path} className={`workspace-terminal-group ${item.path === workspace.path ? 'is-active' : ''} ${activeFile ? 'is-file-hidden' : ''}`} aria-hidden={item.path !== workspace.path || Boolean(activeFile)}>
             {itemSessions.map((session) => <div key={`${item.path}:${session.id}`} className={`terminal-session ${!activeFile && item.path === workspace.path && session.id === activeSessionId ? 'is-visible' : ''}`}><TerminalPane sessionId={session.id} workspace={item.path} /></div>)}
           </div>
-        }) : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
+        })}</Suspense> : <div className="empty-workspace"><FolderPlus size={28} /><h1>작업 공간이 없습니다</h1><p>프로젝트를 추가하면 터미널과 파일 탐색기가 시작됩니다.</p><button onClick={() => void addWorkspace()}><Plus size={15} /> 작업 공간 추가</button></div>}
         {activeFile && <FileView file={activeFile} />}
       </div>
     </section>
@@ -416,10 +422,10 @@ function App() {
     <aside className={`file-panel ${filePanelOpen ? '' : 'is-collapsed'}`}>
       {!workspace ? <div className="file-panel-empty"><FolderPlus size={22} /><strong>프로젝트 파일</strong><span>작업 공간을 추가하면 파일이 표시됩니다.</span></div> : <>
       <div className="file-panel-header"><div><span className="eyebrow">WORKSPACE</span><h2>프로젝트 파일</h2></div><button className="icon-button" onClick={() => setFilePanelOpen(false)} aria-label="파일 패널 닫기"><PanelLeft size={16} /></button></div>
-      <div className="git-summary"><GitBranch size={14} /><span>{git.branch || workspace.branch || '브랜치 없음'}</span><span className="separator">·</span><span className="changed-count">{Object.keys(git.entries).length} 변경</span></div>
+      <div className="git-summary"><GitBranch size={14} /><span>{git.branch || workspace.branch || '브랜치 없음'}</span><span className="separator">·</span><span className="changed-count">{changedEntries.length} 변경</span></div>
       <label className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="파일 검색…" aria-label="파일 검색" /></label>
       <FileTree entries={files} onOpen={openFile} />
-      {Object.keys(git.entries).length > 0 && <div className="changed-files" aria-live="polite"><span className="eyebrow">CHANGED FILES</span>{Object.entries(git.entries).slice(0, 5).map(([path, status]) => <div key={path} className="changed-file"><button className="changed-file-name" onClick={() => void openChangedFile(path)}><span>{status.trim() || 'M'}</span>{path}</button><button className="change-action approve" onClick={() => void approveChangedFile(path)} aria-label={`${path} 변경 승인`}>승인</button><button className="change-action rollback" onClick={() => void rollbackChangedFile(path)} aria-label={`${path} 변경 되돌리기`}>되돌리기</button></div>)}</div>}
+      {changedEntries.length > 0 && <div className="changed-files" aria-live="polite"><span className="eyebrow">CHANGED FILES</span>{changedEntries.slice(0, 5).map(([path, status]) => <div key={path} className="changed-file"><button className="changed-file-name" onClick={() => void openChangedFile(path)}><span>{status.trim() || 'M'}</span>{path}</button><button className="change-action approve" onClick={() => void approveChangedFile(path)} aria-label={`${path} 변경 승인`}>승인</button><button className="change-action rollback" onClick={() => void rollbackChangedFile(path)} aria-label={`${path} 변경 되돌리기`}>되돌리기</button></div>)}</div>}
       </>}
     </aside>
     <div className="usage-area">

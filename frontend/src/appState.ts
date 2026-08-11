@@ -25,12 +25,12 @@ export const demoFiles: FileEntry[] = [
 ]
 
 export function filterFiles(entries: FileEntry[], query: string): FileEntry[] {
-  const normalized = query.trim().toLocaleLowerCase()
+  const normalized = query.trim().toLowerCase()
   if (!normalized) return entries
 
   return entries.flatMap((entry) => {
     const children = entry.children ? filterFiles(entry.children, normalized) : []
-    if (entry.name.toLocaleLowerCase().includes(normalized) || children.length > 0) {
+    if (entry.name.toLowerCase().includes(normalized) || children.length > 0) {
       return [{ ...entry, ...(children.length > 0 ? { children } : {}) }]
     }
     return []
@@ -39,15 +39,27 @@ export function filterFiles(entries: FileEntry[], query: string): FileEntry[] {
 
 export function buildFileTree(files: string[], directories: string[]): FileEntry[] {
   const root: FileEntry[] = []
+  const indexes = new WeakMap<FileEntry[], Map<string, FileEntry>>()
+  const getIndex = (entries: FileEntry[]) => {
+    let index = indexes.get(entries)
+    if (!index) {
+      index = new Map()
+      indexes.set(entries, index)
+    }
+    return index
+  }
+
   const add = (path: string, kind: FileEntry['kind']) => {
     const parts = path.replaceAll('\\', '/').split('/').filter(Boolean)
     let current = root
     parts.forEach((part, index) => {
-      let entry = current.find((candidate) => candidate.name === part)
+      const entriesByName = getIndex(current)
+      let entry = entriesByName.get(part)
       const isLeaf = index === parts.length - 1
       if (!entry) {
         entry = { name: part, kind: isLeaf ? kind : 'folder', ...(isLeaf || kind === 'file' ? {} : { children: [] }) }
         current.push(entry)
+        entriesByName.set(part, entry)
       }
       if (!isLeaf) {
         entry.kind = 'folder'
