@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFileTree, demoFiles, filterFiles } from './appState'
+import { buildFileTree, demoFiles, filterFiles, flattenFilePaths } from './appState'
 
 describe('filterFiles', () => {
   it('returns the complete tree for an empty query', () => {
@@ -25,6 +25,19 @@ describe('buildFileTree', () => {
     expect(buildFileTree(['src/tools.py', 'README.md'], ['src'])).toEqual([
       { name: 'src', kind: 'folder', children: [{ name: 'tools.py', kind: 'file' }] },
       { name: 'README.md', kind: 'file' },
+    ])
+  })
+})
+
+describe('flattenFilePaths', () => {
+  it('returns nested file paths for quick navigation', () => {
+    expect(flattenFilePaths(demoFiles)).toEqual([
+      'src/personal_agent/bridge.py',
+      'src/personal_agent/terminal.py',
+      'src/personal_agent/tools.py',
+      'tests/test_tools.py',
+      'README.md',
+      'pyproject.toml',
     ])
   })
 })

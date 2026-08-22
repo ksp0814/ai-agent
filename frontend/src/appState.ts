@@ -74,3 +74,10 @@ export function buildFileTree(files: string[], directories: string[]): FileEntry
   const sort = (entries: FileEntry[]): FileEntry[] => entries.sort((a, b) => Number(a.kind === 'file') - Number(b.kind === 'file') || a.name.localeCompare(b.name)).map((entry) => ({ ...entry, ...(entry.children ? { children: sort(entry.children) } : {}) }))
   return sort(root)
 }
+
+export function flattenFilePaths(entries: FileEntry[], basePath = ''): string[] {
+  return entries.flatMap((entry) => {
+    const path = basePath ? `${basePath}/${entry.name}` : entry.name
+    return entry.kind === 'folder' ? flattenFilePaths(entry.children ?? [], path) : [path]
+  })
+}
